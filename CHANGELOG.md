@@ -4,6 +4,16 @@
 
 Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
 
+- Relative `firecrackerBin`/`jailerBin` paths resolve shell-style against the
+  caller's cwd (bare names still use `$PATH`) — previously `Deno.Command`'s
+  `cwd` option resolved them inside the machine's state dir.
+- `vm.vsock.connect` races VMM death: a dial in flight when the machine dies
+  rejects promptly with `ProcessExitedError` instead of running out its retry
+  budget.
+- `JailRecord.metadata` + `metadata` option on machine/restore options: opaque
+  caller labels (lease ids, group names) recorded verbatim for downstream
+  supervisors.
+
 - **Typed API client** (`./client`): one method per endpoint of the pinned spec
   (38 operations), HTTP over the Unix API socket via native `fetch`,
   `fault_message`-aware errors, per-request timeouts/signals, `waitReady`. Types

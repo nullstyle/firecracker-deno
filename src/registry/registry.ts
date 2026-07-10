@@ -36,6 +36,12 @@ export interface JailRecord {
   chrootDir?: string;
   /** ISO 8601 creation time. */
   createdAt: string;
+  /**
+   * Opaque caller labels (lease ids, group names, tenant tags, …).
+   * Recorded verbatim and never interpreted by this library — downstream
+   * supervisors use it to correlate records with their own state.
+   */
+  metadata?: Record<string, string>;
 }
 
 /**

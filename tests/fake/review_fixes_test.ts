@@ -11,6 +11,7 @@ import {
   DirRegistry,
   JailerConfigError,
   Machine,
+  ProcessExitedError,
   ReadinessTimeoutError,
   VmmProcess,
   waitForPidfile,
@@ -143,6 +144,55 @@ Deno.test("waitReady respects its budget against a socket that accepts but never
       }
       await serving.catch(() => {});
     }
+  });
+});
+
+Deno.test("a vsock dial in flight rejects promptly when the VMM dies", async () => {
+  await withDir(async (dir) => {
+    const bin = await makeFakeVmmBin(dir, "ready");
+    const vsockUds = join(dir, "v.sock");
+    await using vm = await Machine.launch({
+      firecrackerBin: bin,
+      config: {
+        boot_source: { kernel_image_path: "/vmlinux" },
+        vsock: { guest_cid: 3, uds_path: vsockUds },
+      },
+      stateDir: join(dir, "state"),
+    });
+    // Nothing listens on this port, so the dial retries — with a budget
+    // far longer than the test. Killing the VMM must cut it short.
+    const dialing = vm.vsock.connect(9999, {
+      retryTimeoutMs: 60_000,
+      retryIntervalMs: 50,
+    });
+    const started = performance.now();
+    setTimeout(() => Deno.kill(vm.pid, "SIGKILL"), 150);
+    await assertRejects(() => dialing, ProcessExitedError);
+    assert(
+      performance.now() - started < 5_000,
+      "dial must reject promptly on VMM death, not run out its budget",
+    );
+  });
+});
+
+Deno.test("machine metadata is recorded verbatim on the JailRecord", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "registry"));
+    const bin = await makeFakeVmmBin(dir, "ready");
+    {
+      await using vm = await Machine.launch({
+        firecrackerBin: bin,
+        id: "labeled-vm",
+        config: { boot_source: { kernel_image_path: "/vmlinux" } },
+        stateDir: join(dir, "state"),
+        registry,
+        metadata: { group: "batch-7", lease: "lease-42" },
+      });
+      const record = (await registry.list())[0];
+      assertEquals(record.vmId, vm.vmId);
+      assertEquals(record.metadata, { group: "batch-7", lease: "lease-42" });
+    }
+    assertEquals(await registry.list(), []);
   });
 });
 

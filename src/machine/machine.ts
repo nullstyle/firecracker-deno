@@ -73,6 +73,11 @@ export interface CommonMachineOptions {
   shutdown?: ShutdownOptions;
   /** Extra argv appended to the Firecracker command line. */
   extraArgs?: string[];
+  /**
+   * Opaque labels recorded on the machine's JailRecord (requires a
+   * registry): lease ids, group names, tenant tags. Never interpreted.
+   */
+  metadata?: Record<string, string>;
   /** Aborts `create()` while it waits for readiness. */
   signal?: AbortSignal;
 }
@@ -149,6 +154,11 @@ export interface CommonRestoreOptions {
   shutdown?: ShutdownOptions;
   /** Extra argv appended to the Firecracker command line. */
   extraArgs?: string[];
+  /**
+   * Opaque labels recorded on the machine's JailRecord (requires a
+   * registry): lease ids, group names, tenant tags. Never interpreted.
+   */
+  metadata?: Record<string, string>;
   /** Aborts `restore()` while it waits for readiness. */
   signal?: AbortSignal;
 }
@@ -200,6 +210,7 @@ interface DirectSpawnSpec {
   extraArgs?: string[];
   registry?: VmRegistry;
   shutdown?: ShutdownOptions;
+  metadata?: Record<string, string>;
   /** vsock uds path as the VMM sees it (resolved against the state dir). */
   vsockPath?: string;
 }
@@ -213,6 +224,7 @@ interface JailedSpawnSpec {
   shutdown?: ShutdownOptions;
   readinessTimeoutMs?: number;
   signal?: AbortSignal;
+  metadata?: Record<string, string>;
   /** vsock uds path as the VMM sees it (in-jail). */
   vsockPath?: string;
 }
@@ -299,6 +311,10 @@ export class Machine implements AsyncDisposable {
   #shutdownResult: Promise<VmmExit> | null = null;
   #disposed = false;
   #vsockListeners = new Set<VsockListener>();
+  // Aborted (with a ProcessExitedError) the moment the VMM exit is
+  // observed; composed into cancellable operations like vsock dials so
+  // they reject promptly instead of burning their retry budgets.
+  #exitAborter = new AbortController();
 
   private constructor(init: {
     vmm: VmmHandle;
@@ -321,6 +337,9 @@ export class Machine implements AsyncDisposable {
     this.exited = init.vmm.exited;
     void init.vmm.exited.then((exit) => {
       this.#lifecycle.transition("exited", exit);
+      this.#exitAborter.abort(
+        new ProcessExitedError({ exit, operation: "use the machine" }),
+      );
     });
   }
 
@@ -394,6 +413,7 @@ export class Machine implements AsyncDisposable {
         extraArgs: options.extraArgs,
         registry: options.registry,
         shutdown: options.shutdown,
+        metadata: options.metadata,
         readinessTimeoutMs: options.readinessTimeoutMs,
         signal: options.signal,
         vsockPath,
@@ -407,6 +427,7 @@ export class Machine implements AsyncDisposable {
       extraArgs: options.extraArgs,
       registry: options.registry,
       shutdown: options.shutdown,
+      metadata: options.metadata,
       vsockPath,
     });
   }
@@ -449,6 +470,7 @@ export class Machine implements AsyncDisposable {
             : {}),
           vsockListenerPaths: [],
           createdAt: new Date().toISOString(),
+          ...(spec.metadata !== undefined ? { metadata: spec.metadata } : {}),
         });
         journaled = true;
       }
@@ -547,6 +569,7 @@ export class Machine implements AsyncDisposable {
       ...(paths.vsockUds !== undefined ? { vsockUdsPath: paths.vsockUds } : {}),
       vsockListenerPaths: [],
       createdAt: new Date().toISOString(),
+      ...(spec.metadata !== undefined ? { metadata: spec.metadata } : {}),
     });
 
     const plan = await stageChroot(jail, jailer);
@@ -774,7 +797,16 @@ export class Machine implements AsyncDisposable {
   } = {
     connect: async (port, opts) => {
       this.#lifecycle.assert("vsock.connect", "running");
-      return await connectVsock(this.#requireVsockUds(port), port, opts);
+      // Race the dial against VMM death: a dial in flight when the VMM
+      // dies rejects promptly with ProcessExitedError instead of retrying
+      // out its budget against a vanished socket.
+      const signal = opts?.signal === undefined
+        ? this.#exitAborter.signal
+        : AbortSignal.any([this.#exitAborter.signal, opts.signal]);
+      return await connectVsock(this.#requireVsockUds(port), port, {
+        ...opts,
+        signal,
+      });
     },
     listen: (port) => {
       this.#lifecycle.assert(

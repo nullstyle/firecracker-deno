@@ -22,10 +22,13 @@ import { hostPathOf, type JailPaths } from "./paths.ts";
 
 /** One planned staging action (pure output of {@linkcode planStaging}). */
 export interface StagingAction {
+  /** Source file on the host. */
   hostPath: string;
+  /** In-jail path the file appears at. */
   jailPath: string;
   /** Host-side destination under the chroot root. */
   destPath: string;
+  /** How the file is placed (hardlink falls back to copy across devices). */
   mode: "hardlink" | "copy";
   /** chmod applied to the staged file. */
   chmod: number;

@@ -15,15 +15,18 @@ export class DirRegistry implements VmRegistry {
   /** The directory holding `<vmId>.json` records (created on first put). */
   readonly dir: string;
 
+  /** Use (and create on first put) `dir` as the record directory. */
   constructor(dir: string) {
     this.dir = dir;
   }
 
+  /** Commit `record` atomically (temp file + rename). */
   async put(record: JailRecord): Promise<void> {
     await Deno.mkdir(this.dir, { recursive: true });
     await this.#writeAtomic(record.vmId, record);
   }
 
+  /** Merge `patch` into the stored record (read + atomic rewrite). */
   async update(vmId: string, patch: Partial<JailRecord>): Promise<void> {
     const existing = JSON.parse(
       await Deno.readTextFile(this.#path(vmId)),
@@ -31,6 +34,7 @@ export class DirRegistry implements VmRegistry {
     await this.#writeAtomic(vmId, { ...existing, ...patch, vmId });
   }
 
+  /** Delete the record; already-gone is not an error. */
   async remove(vmId: string): Promise<void> {
     try {
       await Deno.remove(this.#path(vmId));
@@ -39,6 +43,7 @@ export class DirRegistry implements VmRegistry {
     }
   }
 
+  /** All parseable records (torn tmp files and corrupt JSON are skipped). */
   async list(): Promise<JailRecord[]> {
     const records: JailRecord[] = [];
     try {

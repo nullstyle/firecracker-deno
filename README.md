@@ -1,7 +1,8 @@
 # @nullstyle/firecracker
 
-> **Status: pre-release.** The API below is the design target; milestones land
-> incrementally. Nothing is published to JSR yet.
+> **Status: 0.1.0, pre-publication.** Everything below is implemented and tested
+> (87 tests across four tiers, including real-KVM CI); the JSR release is
+> pending.
 
 **@nullstyle/firecracker** is a Deno-native toolkit for controlling
 [Firecracker](https://firecracker-microvm.github.io/) microVMs. It provides
@@ -116,13 +117,22 @@ The `Machine` layer maintains these invariants:
 ## Development
 
 ```sh
-deno task check   # fmt --check, lint, typecheck
-deno task test    # unit + fake-backed tests (no KVM needed, runs on macOS)
+deno task check        # fmt --check, lint, typecheck
+deno task test         # unit + fake-backed tiers (no KVM needed, runs on macOS)
+deno task spec:drift   # generated types match the vendored Firecracker spec
+deno run -A tools/fetch-firecracker.ts   # binaries + kernel + rootfs for integration
+deno task test:integration               # real VMs; Linux + /dev/kvm (+ sudo for jailer)
 ```
 
 Integration tests boot real VMs and are gated behind Linux + `/dev/kvm`; CI runs
-them on `ubuntu-24.04` (GitHub-hosted x86_64 runners expose KVM). See `docs/`
-(forthcoming) for the Lima recipe for local integration runs on Apple Silicon.
+them on `ubuntu-24.04` (GitHub-hosted x86_64 runners expose KVM), including a
+root-gated real-jailer matrix. Guides:
+
+- [Permissions](docs/permissions.md) — exact flags per feature
+- [Running jailed](docs/jailer.md) — threat model, path rules, exit authority
+- [Compatibility](docs/compatibility.md) — the two-minor Firecracker window
+- [macOS development](docs/macos-dev.md) — the no-VM loop, Lima recipe
+- [Testing your app](docs/testing-your-app.md) — building on `FakeFirecracker`
 
 ## License
 

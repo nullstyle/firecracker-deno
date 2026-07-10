@@ -71,6 +71,7 @@ export interface CommonMachineOptions {
 export interface DirectMachineOptions extends CommonMachineOptions {
   /** Path to the `firecracker` binary. */
   firecrackerBin: string;
+  /** Discriminant: never set together with `firecrackerBin`. */
   jailer?: never;
   /** VM id (also passed as `--id`); generated when omitted. */
   id?: string;
@@ -94,8 +95,11 @@ export interface DirectMachineOptions extends CommonMachineOptions {
 export interface JailedMachineOptions extends CommonMachineOptions {
   /** Jailer configuration; `jailer.id` becomes the machine's vmId. */
   jailer: JailerOptions;
+  /** Discriminant: never set together with `jailer`. */
   firecrackerBin?: never;
+  /** The vmId is `jailer.id`; a separate id is not accepted. */
   id?: never;
+  /** Jailed machines live in the chroot; no separate state dir. */
   stateDir?: never;
   /**
    * Crash-recovery journal — **required** for jailed machines: the jailer
@@ -141,19 +145,29 @@ export interface CommonRestoreOptions {
 
 /** Restore into a directly-spawned (unjailed) VMM. */
 export interface DirectRestoreOptions extends CommonRestoreOptions {
+  /** Path to the `firecracker` binary. */
   firecrackerBin: string;
+  /** Discriminant: never set together with `firecrackerBin`. */
   jailer?: never;
+  /** VM id (also passed as `--id`); generated when omitted. */
   id?: string;
+  /** See {@linkcode DirectMachineOptions.stateDir}. */
   stateDir?: string;
+  /** See {@linkcode DirectMachineOptions.registry}. */
   registry?: VmRegistry;
 }
 
 /** Restore into a jailed VMM (registry required, as always when jailed). */
 export interface JailedRestoreOptions extends CommonRestoreOptions {
+  /** Jailer configuration; `jailer.id` becomes the machine's vmId. */
   jailer: JailerOptions;
+  /** Discriminant: never set together with `jailer`. */
   firecrackerBin?: never;
+  /** The vmId is `jailer.id`; a separate id is not accepted. */
   id?: never;
+  /** Jailed machines live in the chroot; no separate state dir. */
   stateDir?: never;
+  /** See {@linkcode JailedMachineOptions.registry}. */
   registry: VmRegistry;
 }
 

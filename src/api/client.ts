@@ -155,6 +155,7 @@ export class FirecrackerClient implements Disposable {
   #transport: ApiTransport;
   #timeoutMs: number;
 
+  /** Create a client for the API socket; connections open lazily per request. */
   constructor(options: FirecrackerClientOptions) {
     this.socketPath = options.socketPath;
     this.#transport = options.transport ??
@@ -562,6 +563,7 @@ export class FirecrackerClient implements Disposable {
     this.#transport.close();
   }
 
+  /** `using` support: closes the transport on scope exit. */
   [Symbol.dispose](): void {
     this.close();
   }

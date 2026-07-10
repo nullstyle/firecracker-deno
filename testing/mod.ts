@@ -54,7 +54,9 @@ import { readLineBytewise, writeAll } from "../src/internal/line_reader.ts";
 
 /** One request the fake has served, in arrival order. */
 export interface RecordedRequest {
+  /** HTTP method, uppercase. */
   method: string;
+  /** Request path as received, e.g. `"/drives/rootfs"`. */
   path: string;
   /** Parsed JSON body, the raw text when unparsable, or `undefined`. */
   body?: unknown;
@@ -62,10 +64,13 @@ export interface RecordedRequest {
 
 /** Matcher + response for {@linkcode FakeFirecracker.failNext}. */
 export interface InjectedFailure {
+  /** HTTP method to match (case-insensitive). */
   method: string;
   /** Exact request path to match, e.g. `"/drives/rootfs"`. */
   path: string;
+  /** Status to answer with. */
   status: number;
+  /** `fault_message` for the error body. */
   faultMessage: string;
 }
 

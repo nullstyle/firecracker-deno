@@ -54,6 +54,7 @@ export abstract class FirecrackerError extends Error {
  * complaining about is directly visible.
  */
 export class ApiError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_API" = "FC_API";
   /** HTTP status returned by the Firecracker API. */
   readonly status: number;
@@ -64,6 +65,7 @@ export class ApiError extends FirecrackerError {
   /** Request path, e.g. `"/machine-config"`. */
   readonly path: string;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(
     opts: {
       status: number;
@@ -92,10 +94,12 @@ export class ApiError extends FirecrackerError {
  * itself answered with an error.
  */
 export class TransportError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_TRANSPORT" = "FC_TRANSPORT";
   /** Path of the Unix socket that could not be reached. */
   readonly socketPath: string;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(opts: { socketPath: string; message?: string; cause?: unknown }) {
     super(
       opts.message ??
@@ -113,10 +117,12 @@ export class TransportError extends FirecrackerError {
  * tail, which almost always names the actual cause of death.
  */
 export class ProcessExitedError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_VMM_EXITED" = "FC_VMM_EXITED";
   /** How and why the VMM exited. */
   readonly exit: VmmExit;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(opts: { exit: VmmExit; operation?: string; cause?: unknown }) {
     const how = opts.exit.signal !== null
       ? `signal ${opts.exit.signal}`
@@ -140,6 +146,7 @@ export class ProcessExitedError extends FirecrackerError {
  * {@linkcode ProcessExitedError} instead.)
  */
 export class ReadinessTimeoutError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_TIMEOUT" = "FC_TIMEOUT";
   /** The API socket path that never became ready. */
   readonly socketPath: string;
@@ -148,6 +155,7 @@ export class ReadinessTimeoutError extends FirecrackerError {
   /** Captured stderr so far — often explains the stall. */
   readonly stderrTail: string;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(
     opts: {
       socketPath: string;
@@ -175,10 +183,12 @@ export class ReadinessTimeoutError extends FirecrackerError {
  * unkillable (D-state) process and a host-level problem.
  */
 export class ShutdownTimeoutError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_SHUTDOWN" = "FC_SHUTDOWN";
   /** The last stage that was attempted before giving up. */
   readonly stageReached: ShutdownStage;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(opts: { stageReached: ShutdownStage; message?: string }) {
     super(
       opts.message ??
@@ -196,6 +206,7 @@ export class ShutdownTimeoutError extends FirecrackerError {
  * {@linkcode VsockDialFailureReason}.
  */
 export class VsockDialError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_VSOCK_DIAL" = "FC_VSOCK_DIAL";
   /** Why the dial failed. */
   readonly reason: VsockDialFailureReason;
@@ -206,6 +217,7 @@ export class VsockDialError extends FirecrackerError {
   /** How many connection attempts were made before failing. */
   readonly attempts: number;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(
     opts: {
       reason: VsockDialFailureReason;
@@ -232,8 +244,10 @@ export class VsockDialError extends FirecrackerError {
  * Raised before any process is spawned.
  */
 export class JailerConfigError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_JAILER" = "FC_JAILER";
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(message: string, opts?: { cause?: unknown }) {
     super(message, opts);
     this.name = "JailerConfigError";
@@ -246,12 +260,14 @@ export class JailerConfigError extends FirecrackerError {
  * pre-boot-only endpoint.
  */
 export class InvalidStateError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_STATE" = "FC_STATE";
   /** The machine state at the time of the call. */
   readonly state: VmState;
   /** The operation that was rejected. */
   readonly operation: string;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(opts: { state: VmState; operation: string }) {
     super(`cannot ${opts.operation} while the machine is "${opts.state}"`);
     this.name = "InvalidStateError";
@@ -277,12 +293,14 @@ export interface CleanupFailure {
  * the job.
  */
 export class CleanupError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
   override readonly code: "FC_CLEANUP" = "FC_CLEANUP";
   /** Each cleanup step that failed, with its underlying cause. */
   readonly failures: ReadonlyArray<CleanupFailure>;
   /** Paths believed to still exist on disk after cleanup. */
   readonly leaked: ReadonlyArray<string>;
 
+  /** Constructs the error; the message is derived from the fields. */
   constructor(
     opts: {
       failures: ReadonlyArray<CleanupFailure>;

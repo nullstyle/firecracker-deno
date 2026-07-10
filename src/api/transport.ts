@@ -39,6 +39,7 @@ export class UnixHttpTransport implements ApiTransport {
   #client: Deno.HttpClient;
   #closed = false;
 
+  /** Create a transport whose requests go to `socketPath`. */
   constructor(socketPath: string) {
     this.socketPath = socketPath;
     this.#client = Deno.createHttpClient({
@@ -46,6 +47,7 @@ export class UnixHttpTransport implements ApiTransport {
     });
   }
 
+  /** Perform one HTTP request over the Unix socket. */
   async request(
     method: string,
     path: string,
@@ -83,6 +85,7 @@ export class UnixHttpTransport implements ApiTransport {
     }
   }
 
+  /** Close the underlying HTTP client. Idempotent. */
   close(): void {
     if (this.#closed) return;
     this.#closed = true;

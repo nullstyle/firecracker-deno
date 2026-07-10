@@ -77,12 +77,15 @@ async function readPidfile(path: string): Promise<number | null> {
  * these modes — use the `logger` device).
  */
 export class ReparentedVmm implements VmmHandle {
+  /** The reparented VMM's pid, read from the pidfile. */
   readonly pid: number;
+  /** Resolves when liveness polling observes the pid gone. Never rejects. */
   readonly exited: Promise<VmmExit>;
 
   #exit: VmmExit | null = null;
   #jailerStderr: () => string;
 
+  /** Watch `pid`; `jailerStderr` supplies diagnostics captured pre-detach. */
   constructor(
     pid: number,
     opts: { jailerStderr: () => string; pollIntervalMs?: number },
@@ -105,18 +108,22 @@ export class ReparentedVmm implements VmmHandle {
     })();
   }
 
+  /** The exit, if liveness polling has already observed it. */
   get exit(): VmmExit | null {
     return this.#exit;
   }
 
+  /** What the jailer printed before detaching (the VMM's own stderr is unobservable). */
   stderrTail(): string {
     return this.#jailerStderr();
   }
 
+  /** Always empty: a reparented VMM's stdout is unobservable. */
   stdoutTail(): string {
     return "";
   }
 
+  /** Signal the pid directly; already-gone processes are not an error. */
   kill(signal: Deno.Signal): void {
     if (this.#exit !== null) return;
     try {

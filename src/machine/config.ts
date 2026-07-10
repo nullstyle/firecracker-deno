@@ -37,17 +37,29 @@ export interface VmConfig {
   machine_config?: MachineConfiguration;
   /** Kernel to boot. Required — a VM with nothing to boot is a config error. */
   boot_source: BootSource;
+  /** Block devices, applied in order (`PUT /drives/{id}` each). */
   drives?: Drive[];
+  /** Tap-backed network interfaces (the taps are yours to create). */
   network_interfaces?: NetworkInterface[];
+  /** The vsock device (`uds_path` is in-jail-relative when jailed). */
   vsock?: Vsock;
+  /** Memory balloon device. */
   balloon?: Balloon;
+  /** Virtio-rng entropy device. */
   entropy?: EntropyDevice;
+  /** Serial device configuration. */
   serial?: SerialDevice;
+  /** Persistent-memory devices. */
   pmem?: Pmem[];
+  /** Virtio-mem hotplug configuration. */
   memory_hotplug?: MemoryHotplugConfig;
+  /** Guest CPU feature configuration. */
   cpu_config?: CpuConfig;
+  /** Metadata service: its config, plus optional initial data store. */
   mmds?: { config: MmdsConfig; data?: MmdsContentsObject };
+  /** Logger — applied first, so the rest of configuration is observable. */
   logger?: Logger;
+  /** Metrics — applied right after the logger. */
   metrics?: Metrics;
 }
 

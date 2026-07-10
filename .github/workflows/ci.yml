@@ -85,3 +85,10 @@ jobs:
           FC_TEST_BIN: tests/assets/firecracker
           FC_TEST_KERNEL: tests/assets/vmlinux
           FC_TEST_ROOTFS: tests/assets/rootfs.ext4
+      - name: Run root/jailer integration tests (tier 4)
+        run: sudo -E "$(command -v deno)" test -A tests/integration/
+        env:
+          FC_TEST_BIN: tests/assets/firecracker
+          FC_TEST_KERNEL: tests/assets/vmlinux
+          FC_TEST_ROOTFS: tests/assets/rootfs.ext4
+          FC_TEST_JAILER: tests/assets/jailer

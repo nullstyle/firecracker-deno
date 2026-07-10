@@ -62,7 +62,13 @@ export {
   SHUTDOWN_DEFAULTS,
   type ShutdownTarget,
 } from "./src/process/shutdown.ts";
-export { VmmProcess, type VmmSpawnOptions } from "./src/process/supervisor.ts";
+export {
+  type VmmHandle,
+  VmmProcess,
+  type VmmSpawnOptions,
+} from "./src/process/supervisor.ts";
+export { ReparentedVmm, waitForPidfile } from "./src/process/pidfile.ts";
+export * from "./src/jailer/mod.ts";
 export {
   cleanupError,
   type CleanupStep,

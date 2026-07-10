@@ -19,7 +19,9 @@ export async function makeFakeVmmBin(
   const envLine = Object.entries({ FAKE_VMM_MODE: mode, ...env })
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
     .join(" ");
-  const path = join(dir, `fake-vmm-${mode}`);
+  // Name contains "firecracker" so the shim passes jailer --exec-file
+  // validation when used in jailed-machine tests.
+  const path = join(dir, `firecracker-fake-${mode}`);
   await Deno.writeTextFile(
     path,
     `#!/bin/sh\n${envLine} exec ${JSON.stringify(Deno.execPath())} run -A ${

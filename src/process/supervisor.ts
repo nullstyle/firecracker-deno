@@ -8,6 +8,27 @@
 import { RingBuffer } from "../internal/ring_buffer.ts";
 import type { VmmExit } from "../types.ts";
 
+/**
+ * What the machine layer needs from a VMM, regardless of how it is
+ * observed: a direct child ({@linkcode VmmProcess}, child-status
+ * authority) or a reparented process (`ReparentedVmm`, pidfile-poll
+ * authority).
+ */
+export interface VmmHandle {
+  /** Authoritative VMM pid. */
+  readonly pid: number;
+  /** Resolves exactly once with the observed exit. Never rejects. */
+  readonly exited: Promise<VmmExit>;
+  /** The exit, if already observed. */
+  readonly exit: VmmExit | null;
+  /** Deliver a signal; a process that already exited is not an error. */
+  kill(signal: Deno.Signal): void;
+  /** Captured stderr tail (empty when unobservable). */
+  stderrTail(): string;
+  /** Captured stdout tail (guest console; empty when unobservable). */
+  stdoutTail(): string;
+}
+
 /** Options for {@linkcode VmmProcess.spawn}. */
 export interface VmmSpawnOptions {
   /** Executable to run (firecracker, jailer, or a test double). */
@@ -29,7 +50,7 @@ export interface VmmSpawnOptions {
  * (Firecracker's own errors) are continuously drained into bounded ring
  * buffers — an undrained pipe would eventually block the VMM.
  */
-export class VmmProcess {
+export class VmmProcess implements VmmHandle {
   /** PID of the direct child. */
   readonly pid: number;
   /**

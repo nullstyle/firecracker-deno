@@ -57,6 +57,7 @@ switch (mode) {
       dir: await Deno.makeTempDir({ prefix: "fake-vmm-" }),
       socketPath,
       onCtrlAltDel: () => setTimeout(() => Deno.exit(0), 5),
+      vsockPathPrefix: Deno.env.get("FAKE_VMM_CHROOT"),
     });
     const echoPort = Deno.env.get("FAKE_VMM_ECHO_PORT");
     if (echoPort !== undefined) {

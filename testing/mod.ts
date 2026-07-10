@@ -84,6 +84,12 @@ export interface FakeFirecrackerOptions {
   version?: string;
   /** Called when the API receives `SendCtrlAltDel` while running. */
   onCtrlAltDel?: () => void;
+  /**
+   * Chroot-emulation prefix for the vsock UDS: when set, `PUT /vsock`
+   * binds the mux at `prefix + uds_path`, the way a jailed Firecracker
+   * resolves in-jail paths. Used by jailer test doubles.
+   */
+  vsockPathPrefix?: string;
 }
 
 const POST_BOOT_MSG =
@@ -104,6 +110,7 @@ export class FakeFirecracker implements AsyncDisposable {
   #id: string;
   #version: string;
   #onCtrlAltDel?: () => void;
+  #vsockPathPrefix?: string;
   #server: Deno.HttpServer<Deno.UnixAddr>;
   #ownsDir: boolean;
 
@@ -146,6 +153,7 @@ export class FakeFirecracker implements AsyncDisposable {
     this.#id = opts.id ?? "fake-fc";
     this.#version = opts.version ?? "1.16.1";
     this.#onCtrlAltDel = opts.onCtrlAltDel;
+    this.#vsockPathPrefix = opts.vsockPathPrefix;
     this.#server = Deno.serve(
       { path: this.socketPath, transport: "unix", onListen: () => {} },
       (req) => this.#handle(req),
@@ -336,7 +344,14 @@ export class FakeFirecracker implements AsyncDisposable {
         const rejected = this.#requirePreBoot();
         if (rejected) return rejected;
         this.#vsock = body as Vsock;
-        this.#bindVsock(this.#resolvePath(this.#vsock.uds_path));
+        this.#bindVsock(
+          this.#vsockPathPrefix !== undefined
+            ? this.#vsockPathPrefix +
+              (this.#vsock.uds_path.startsWith("/")
+                ? this.#vsock.uds_path
+                : `/${this.#vsock.uds_path}`)
+            : this.#resolvePath(this.#vsock.uds_path),
+        );
         return noContent();
       }
       case "PUT /entropy": {

@@ -6,6 +6,7 @@
     ".": "./mod.ts",
     "./client": "./src/api/mod.ts",
     "./vsock": "./src/vsock/mod.ts",
+    "./jailer": "./src/jailer/mod.ts",
     "./types": "./src/api/types.ts",
     "./testing": "./testing/mod.ts"
   },
@@ -18,7 +19,7 @@
   },
   "tasks": {
     "check": "deno fmt --check && deno lint && deno check .",
-    "test": "deno test --allow-read --allow-write --allow-net --allow-run --allow-env tests/unit/ tests/fake/",
+    "test": "deno test --allow-read --allow-write --allow-net --allow-run --allow-env --allow-sys=uid,gid tests/unit/ tests/fake/",
     "test:integration": "deno test -A tests/integration/",
     "spec:fetch": "deno run --allow-net --allow-write=spec tools/fetch-spec.ts",
     "codegen": "deno run --allow-read --allow-write --allow-net --allow-env tools/codegen.ts",

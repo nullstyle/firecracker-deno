@@ -11,7 +11,8 @@ import type { VmmExit, VmState } from "../types.ts";
 
 const TRANSITIONS: Record<VmState, readonly VmState[]> = {
   configured: ["starting", "shutting_down", "exited"],
-  starting: ["running", "configured", "shutting_down", "exited"],
+  // starting → paused: a snapshot restore without resume lands paused.
+  starting: ["running", "paused", "configured", "shutting_down", "exited"],
   running: ["paused", "shutting_down", "exited"],
   paused: ["running", "shutting_down", "exited"],
   shutting_down: ["exited"],

@@ -502,6 +502,15 @@ export class FakeFirecracker implements AsyncDisposable {
         const rejected = this.#requirePreBoot();
         if (rejected) return rejected;
         const params = body as SnapshotLoadParams;
+        if (params.vsock_override?.uds_path !== undefined) {
+          // The restored snapshot's vsock device rebinds at the override.
+          const uds = params.vsock_override.uds_path;
+          this.#bindVsock(
+            this.#vsockPathPrefix !== undefined
+              ? this.#vsockPathPrefix + (uds.startsWith("/") ? uds : `/${uds}`)
+              : this.#resolvePath(uds),
+          );
+        }
         this.#state = params.resume_vm ? "Running" : "Paused";
         return noContent();
       }

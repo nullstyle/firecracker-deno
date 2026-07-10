@@ -8,6 +8,7 @@
 
 import { isAbsolute, join } from "@std/path";
 import { FirecrackerClient } from "../api/client.ts";
+import type { SnapshotCreateParams, SnapshotLoadParams } from "../api/types.ts";
 import {
   cleanupError,
   type CleanupStep,
@@ -108,11 +109,96 @@ export interface JailedMachineOptions extends CommonMachineOptions {
 /** Options for {@linkcode Machine.create} / {@linkcode Machine.launch}. */
 export type MachineOptions = DirectMachineOptions | JailedMachineOptions;
 
+/** Restore options shared by direct and jailed machines. */
+export interface CommonRestoreOptions {
+  /**
+   * Wire-verbatim `PUT /snapshot/load` parameters. Snapshot/memory paths
+   * are host paths for direct machines and in-jail paths when jailed
+   * (stage the snapshot files into the chroot). `mem_backend.backend_type`
+   * `"File"` is fully supported; `"Uffd"` requires an external page-fault
+   * handler process listening on the backend path — Deno cannot receive
+   * the userfaultfd over SCM_RIGHTS, so no in-process handler exists.
+   *
+   * Restored VMs resume with their snapshotted config; open vsock
+   * connections are gone (guest listeners survive), and `vsock_override`
+   * rebinds the host-side UDS path.
+   */
+  snapshot: SnapshotLoadParams;
+  /** See {@linkcode CommonMachineOptions.socketPath}. */
+  socketPath?: string;
+  /**
+   * Deadline for the API socket to answer after spawn.
+   * @default 5_000
+   */
+  readinessTimeoutMs?: number;
+  /** Default deadlines for {@linkcode Machine.shutdown}. */
+  shutdown?: ShutdownOptions;
+  /** Extra argv appended to the Firecracker command line. */
+  extraArgs?: string[];
+  /** Aborts `restore()` while it waits for readiness. */
+  signal?: AbortSignal;
+}
+
+/** Restore into a directly-spawned (unjailed) VMM. */
+export interface DirectRestoreOptions extends CommonRestoreOptions {
+  firecrackerBin: string;
+  jailer?: never;
+  id?: string;
+  stateDir?: string;
+  registry?: VmRegistry;
+}
+
+/** Restore into a jailed VMM (registry required, as always when jailed). */
+export interface JailedRestoreOptions extends CommonRestoreOptions {
+  jailer: JailerOptions;
+  firecrackerBin?: never;
+  id?: never;
+  stateDir?: never;
+  registry: VmRegistry;
+}
+
+/** Options for {@linkcode Machine.restore}. */
+export type RestoreOptions = DirectRestoreOptions | JailedRestoreOptions;
+
+/** Cross-cutting settings a machine keeps for its whole life. */
+interface MachineSettings {
+  shutdown?: ShutdownOptions;
+  registry?: VmRegistry;
+  jailer?: JailerOptions;
+}
+
+/** Internal: what a direct spawn needs (config-independent). */
+interface DirectSpawnSpec {
+  firecrackerBin: string;
+  id?: string;
+  stateDir?: string;
+  socketPath?: string;
+  extraArgs?: string[];
+  registry?: VmRegistry;
+  shutdown?: ShutdownOptions;
+  /** vsock uds path as the VMM sees it (resolved against the state dir). */
+  vsockPath?: string;
+}
+
+/** Internal: what a jailed spawn needs (config-independent). */
+interface JailedSpawnSpec {
+  jailer: JailerOptions;
+  socketPath?: string;
+  extraArgs?: string[];
+  registry: VmRegistry | undefined;
+  shutdown?: ShutdownOptions;
+  readinessTimeoutMs?: number;
+  signal?: AbortSignal;
+  /** vsock uds path as the VMM sees it (in-jail). */
+  vsockPath?: string;
+}
+
 /**
  * A supervised Firecracker microVM.
  *
- * Construct via {@linkcode Machine.create} (spawn + configure, no boot) or
- * {@linkcode Machine.launch} (create + `InstanceStart`). Dispose with
+ * Construct via {@linkcode Machine.create} (spawn + configure, no boot),
+ * {@linkcode Machine.launch} (create + `InstanceStart`), or
+ * {@linkcode Machine.restore} (spawn + snapshot load). Dispose with
  * `await using` — disposal shuts the VMM down, confirms death, reclaims
  * every file this library created, and only then resolves.
  *
@@ -182,7 +268,7 @@ export class Machine implements AsyncDisposable {
 
   #vmm: VmmHandle;
   #lifecycle = new LifecycleState();
-  #options: MachineOptions;
+  #settings: MachineSettings;
   #ownsStateDir: boolean;
   #jail: JailPaths | null;
   #stagedPaths: ReadonlyMap<string, string>;
@@ -193,7 +279,7 @@ export class Machine implements AsyncDisposable {
   private constructor(init: {
     vmm: VmmHandle;
     client: FirecrackerClient;
-    options: MachineOptions;
+    settings: MachineSettings;
     paths: Machine["paths"];
     ownsStateDir: boolean;
     vmId: string;
@@ -202,7 +288,7 @@ export class Machine implements AsyncDisposable {
   }) {
     this.#vmm = init.vmm;
     this.client = init.client;
-    this.#options = init.options;
+    this.#settings = init.settings;
     this.paths = init.paths;
     this.#ownsStateDir = init.ownsStateDir;
     this.vmId = init.vmId;
@@ -226,10 +312,15 @@ export class Machine implements AsyncDisposable {
    */
   static async create(options: MachineOptions): Promise<Machine> {
     options.signal?.throwIfAborted();
-    if (options.jailer !== undefined) {
-      return await Machine.#createJailed(options);
-    }
-    return await Machine.#createDirect(options);
+    const machine = await Machine.#spawn(
+      options,
+      options.config.vsock?.uds_path,
+    );
+    return await machine.#finishCreate(
+      options.readinessTimeoutMs ?? 5_000,
+      options.signal,
+      () => applyVmConfig(machine.client, options.config),
+    );
   }
 
   /** {@linkcode create} followed by `InstanceStart` — the one-shot happy path. */
@@ -244,19 +335,71 @@ export class Machine implements AsyncDisposable {
     return machine;
   }
 
-  static async #createDirect(options: DirectMachineOptions): Promise<Machine> {
-    const ownsStateDir = options.stateDir === undefined;
-    const stateDir = options.stateDir ??
+  /**
+   * Spawn a fresh VMM and load a snapshot into it (`PUT /snapshot/load`).
+   * The machine comes back `"paused"`, or `"running"` when
+   * `snapshot.resume_vm` is set. No {@linkcode VmConfig} applies — the
+   * snapshot carries the configuration.
+   */
+  static async restore(options: RestoreOptions): Promise<Machine> {
+    options.signal?.throwIfAborted();
+    const machine = await Machine.#spawn(
+      options,
+      options.snapshot.vsock_override?.uds_path,
+    );
+    await machine.#finishCreate(
+      options.readinessTimeoutMs ?? 5_000,
+      options.signal,
+      () => machine.client.loadSnapshot(options.snapshot),
+    );
+    machine.#lifecycle.transition("starting");
+    machine.#lifecycle.transition(
+      options.snapshot.resume_vm === true ? "running" : "paused",
+    );
+    return machine;
+  }
+
+  static async #spawn(
+    options: MachineOptions | RestoreOptions,
+    vsockPath: string | undefined,
+  ): Promise<Machine> {
+    if (options.jailer !== undefined) {
+      return await Machine.#spawnJailed({
+        jailer: options.jailer,
+        socketPath: options.socketPath,
+        extraArgs: options.extraArgs,
+        registry: options.registry,
+        shutdown: options.shutdown,
+        readinessTimeoutMs: options.readinessTimeoutMs,
+        signal: options.signal,
+        vsockPath,
+      });
+    }
+    return await Machine.#spawnDirect({
+      firecrackerBin: options.firecrackerBin,
+      id: options.id,
+      stateDir: options.stateDir,
+      socketPath: options.socketPath,
+      extraArgs: options.extraArgs,
+      registry: options.registry,
+      shutdown: options.shutdown,
+      vsockPath,
+    });
+  }
+
+  static async #spawnDirect(spec: DirectSpawnSpec): Promise<Machine> {
+    const ownsStateDir = spec.stateDir === undefined;
+    const stateDir = spec.stateDir ??
       await Deno.makeTempDir({ prefix: "fc-vm-" });
     if (!ownsStateDir) await Deno.mkdir(stateDir, { recursive: true });
 
-    const vmId = options.id ?? `fc-${crypto.randomUUID()}`;
-    const apiSocket = resolveIn(stateDir, options.socketPath ?? "fc.sock");
+    const vmId = spec.id ?? `fc-${crypto.randomUUID()}`;
+    const apiSocket = resolveIn(stateDir, spec.socketPath ?? "fc.sock");
     const paths: Machine["paths"] = {
       apiSocket,
       stateDir,
-      ...(options.config.vsock
-        ? { vsockUds: resolveIn(stateDir, options.config.vsock.uds_path) }
+      ...(spec.vsockPath !== undefined
+        ? { vsockUds: resolveIn(stateDir, spec.vsockPath) }
         : {}),
     };
     assertSocketPathLength(paths.apiSocket, "API socket path");
@@ -266,8 +409,8 @@ export class Machine implements AsyncDisposable {
 
     // Journal-before-spawn: the record must exist before the process does,
     // so no crash window can leave an unrecorded VMM behind.
-    if (options.registry !== undefined) {
-      await options.registry.put({
+    if (spec.registry !== undefined) {
+      await spec.registry.put({
         version: 1,
         vmId,
         pid: null,
@@ -283,37 +426,36 @@ export class Machine implements AsyncDisposable {
     }
 
     const vmm = VmmProcess.spawn({
-      command: options.firecrackerBin,
+      command: spec.firecrackerBin,
       args: [
         "--api-sock",
         apiSocket,
         "--id",
         vmId,
-        ...(options.extraArgs ?? []),
+        ...(spec.extraArgs ?? []),
       ],
       cwd: stateDir,
     });
-    if (options.registry !== undefined) {
+    if (spec.registry !== undefined) {
       // Best-effort: a record with pid null still reconciles via its files.
-      await options.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
+      await spec.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
     }
-    const machine = new Machine({
+    return new Machine({
       vmm,
       client: new FirecrackerClient({ socketPath: apiSocket }),
-      options,
+      settings: { shutdown: spec.shutdown, registry: spec.registry },
       paths,
       ownsStateDir,
       vmId,
       jail: null,
       stagedPaths: new Map(),
     });
-    return await machine.#finishCreate(options);
   }
 
-  static async #createJailed(options: JailedMachineOptions): Promise<Machine> {
-    const jailer = options.jailer;
+  static async #spawnJailed(spec: JailedSpawnSpec): Promise<Machine> {
+    const jailer = spec.jailer;
     validateJailerOptions(jailer);
-    if (options.registry === undefined) {
+    if (spec.registry === undefined) {
       throw new JailerConfigError(
         "a registry is required for jailed machines: the jailer cleans up " +
           "nothing on exit, and only a pre-spawn journal makes chroots and " +
@@ -322,7 +464,7 @@ export class Machine implements AsyncDisposable {
     }
     const vmId = jailer.id;
     const jail = computeJailPaths(jailer);
-    const socketJailPath = options.socketPath ?? "/fc.sock";
+    const socketJailPath = spec.socketPath ?? "/fc.sock";
     if (!socketJailPath.startsWith("/")) {
       throw new JailerConfigError(
         `jailed socketPath must be an absolute in-jail path, got ${
@@ -335,8 +477,8 @@ export class Machine implements AsyncDisposable {
       apiSocket,
       stateDir: jail.jailRoot,
       chrootRoot: jail.chrootRoot,
-      ...(options.config.vsock
-        ? { vsockUds: hostPathOf(jail, options.config.vsock.uds_path) }
+      ...(spec.vsockPath !== undefined
+        ? { vsockUds: hostPathOf(jail, spec.vsockPath) }
         : {}),
     };
     // Checked against the HOST view: the in-jail path is short, but tools
@@ -348,7 +490,7 @@ export class Machine implements AsyncDisposable {
 
     // Journal-before-spawn (before staging, even: a crash mid-staging must
     // leave a reclaimable record for the half-built chroot).
-    await options.registry.put({
+    await spec.registry.put({
       version: 1,
       vmId,
       pid: null,
@@ -372,7 +514,7 @@ export class Machine implements AsyncDisposable {
         socketJailPath,
         "--id",
         vmId,
-        ...(options.extraArgs ?? []),
+        ...(spec.extraArgs ?? []),
       ]),
     });
 
@@ -382,8 +524,8 @@ export class Machine implements AsyncDisposable {
       if (reparented) {
         const pid = await waitForPidfile(jail.pidfileHost, {
           jailer: jailerProc,
-          timeoutMs: options.readinessTimeoutMs ?? 5_000,
-          signal: options.signal,
+          timeoutMs: spec.readinessTimeoutMs ?? 5_000,
+          signal: spec.signal,
         });
         vmm = new ReparentedVmm(pid, {
           jailerStderr: () => jailerProc.stderrTail(),
@@ -396,33 +538,37 @@ export class Machine implements AsyncDisposable {
         removePathStep("remove-chroot", jail.jailRoot, { recursive: true }),
       ]);
       if (failures.length === 0) {
-        await options.registry.remove(vmId).catch(() => {});
+        await spec.registry.remove(vmId).catch(() => {});
       }
       throw err;
     }
-    await options.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
+    await spec.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
 
-    const machine = new Machine({
+    return new Machine({
       vmm,
       client: new FirecrackerClient({ socketPath: apiSocket }),
-      options,
+      settings: {
+        shutdown: spec.shutdown,
+        registry: spec.registry,
+        jailer,
+      },
       paths,
       ownsStateDir: false,
       vmId,
       jail,
       stagedPaths,
     });
-    return await machine.#finishCreate(options);
   }
 
-  /** Shared tail of `create()`: readiness (racing death) + config apply. */
-  async #finishCreate(options: MachineOptions): Promise<Machine> {
+  /** Shared tail of create/restore: readiness (racing death) + configure. */
+  async #finishCreate(
+    readinessTimeoutMs: number,
+    signal: AbortSignal | undefined,
+    configure: () => Promise<void>,
+  ): Promise<Machine> {
     try {
-      await this.#awaitApiReady(
-        options.readinessTimeoutMs ?? 5_000,
-        options.signal,
-      );
-      await applyVmConfig(this.client, options.config);
+      await this.#awaitApiReady(readinessTimeoutMs, signal);
+      await configure();
     } catch (err) {
       await this.#destroyAfterFailedCreate();
       throw err;
@@ -491,6 +637,30 @@ export class Machine implements AsyncDisposable {
     this.#lifecycle.transition("running");
   }
 
+  /**
+   * Snapshot the microVM (`PUT /snapshot/create`). Firecracker requires a
+   * paused VM: pass `pause: true` to pause–snapshot–resume in one call, or
+   * call it on an already-paused machine. Relative paths land in the VMM's
+   * working directory (the state dir) for direct machines; jailed machines
+   * take in-jail paths.
+   */
+  async snapshot(
+    params: SnapshotCreateParams & { pause?: boolean },
+  ): Promise<void> {
+    const { pause, ...createParams } = params;
+    if (pause === true && this.#lifecycle.state === "running") {
+      await this.pause();
+      try {
+        await this.client.createSnapshot(createParams);
+      } finally {
+        await this.resume();
+      }
+      return;
+    }
+    this.#lifecycle.assert("snapshot", "paused");
+    await this.client.createSnapshot(createParams);
+  }
+
   /** Resolve when the machine reaches `state`; see `LifecycleState.waitFor`. */
   waitFor(
     state: VmState,
@@ -510,8 +680,9 @@ export class Machine implements AsyncDisposable {
 
   /**
    * Vsock operations against this machine's vsock device (requires
-   * `config.vsock`). Connections are standard `Deno.Conn`s; listeners
-   * created here are closed and unlinked during disposal.
+   * `config.vsock`, or `vsock_override` for restored machines).
+   * Connections are standard `Deno.Conn`s; listeners created here are
+   * closed and unlinked during disposal.
    */
   readonly vsock: {
     /** Dial a guest port; see `connectVsock`. Requires a running machine. */
@@ -533,9 +704,9 @@ export class Machine implements AsyncDisposable {
       );
       const listener = listenVsock(this.#requireVsockUds(port), port);
       this.#vsockListeners.add(listener);
-      if (this.#options.registry !== undefined) {
+      if (this.#settings.registry !== undefined) {
         // Best-effort journal update; crash-window leak is one socket file.
-        void this.#options.registry.update(this.vmId, {
+        void this.#settings.registry.update(this.vmId, {
           vsockListenerPaths: [...this.#vsockListeners].map((l) => l.path),
         }).catch(() => {});
       }
@@ -566,7 +737,7 @@ export class Machine implements AsyncDisposable {
     if (this.#lifecycle.terminal) return this.exited;
     const wasRunning = this.#lifecycle.state === "running";
     this.#lifecycle.transition("shutting_down");
-    const merged: ShutdownOptions = { ...this.#options.shutdown, ...opts };
+    const merged: ShutdownOptions = { ...this.#settings.shutdown, ...opts };
     if (!wasRunning) merged.ctrlAltDelTimeoutMs = 0;
     this.#shutdownResult = (async () => {
       const exit = await escalatingShutdown({
@@ -618,11 +789,11 @@ export class Machine implements AsyncDisposable {
       failures.push(...await runCleanupSteps(this.#fileCleanupSteps()));
     }
     if (
-      this.#options.registry !== undefined && confirmedDead &&
+      this.#settings.registry !== undefined && confirmedDead &&
       failures.length === 0
     ) {
       try {
-        await this.#options.registry.remove(this.vmId);
+        await this.#settings.registry.remove(this.vmId);
       } catch (cause) {
         failures.push({ step: "registry-remove", cause });
       }
@@ -678,7 +849,7 @@ export class Machine implements AsyncDisposable {
 
   /** Best-effort cgroup-v2 subtree removal (jailer creates, never removes). */
   #cgroupCleanupStep(): CleanupStep | null {
-    const jailer = this.#options.jailer;
+    const jailer = this.#settings.jailer;
     if (jailer === undefined || this.#jail === null) return null;
     const usesCgroups = jailer.parentCgroup !== undefined ||
       Object.keys(jailer.cgroups ?? {}).length > 0;
@@ -732,8 +903,8 @@ export class Machine implements AsyncDisposable {
     this.#disposed = true;
     // Best effort: the original create() error is what the caller needs.
     const failures = await runCleanupSteps(this.#fileCleanupSteps());
-    if (this.#options.registry !== undefined && failures.length === 0) {
-      await this.#options.registry.remove(this.vmId).catch(() => {});
+    if (this.#settings.registry !== undefined && failures.length === 0) {
+      await this.#settings.registry.remove(this.vmId).catch(() => {});
     }
   }
 }

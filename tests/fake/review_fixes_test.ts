@@ -5,7 +5,8 @@
  */
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { join } from "@std/path";
+import { join, relative } from "@std/path";
+import { makeFakeVmmBin } from "./fake_vmm_helper.ts";
 import {
   DirRegistry,
   JailerConfigError,
@@ -25,6 +26,24 @@ async function withDir(fn: (dir: string) => Promise<void>): Promise<void> {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 }
+
+Deno.test("relative firecrackerBin resolves against our cwd, not the state dir", async () => {
+  await withDir(async (dir) => {
+    // Regression for the first real CI run: FC_TEST_BIN=tests/assets/…
+    // (relative) was resolved inside the machine's stateDir because
+    // Deno.Command applies its cwd option to relative binary paths.
+    const absBin = await makeFakeVmmBin(dir, "ready");
+    const relBin = relative(Deno.cwd(), absBin);
+    assert(!relBin.startsWith("/"), `expected a relative path: ${relBin}`);
+    await using vm = await Machine.launch({
+      firecrackerBin: relBin,
+      config: { boot_source: { kernel_image_path: "/vmlinux" } },
+      stateDir: join(dir, "state"),
+    });
+    assertEquals(vm.state, "running");
+    await vm.shutdown();
+  });
+});
 
 Deno.test("failed spawn (bad binary) unwinds the journal record and state", async () => {
   await withDir(async (dir) => {

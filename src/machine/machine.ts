@@ -6,7 +6,7 @@
  * @module
  */
 
-import { isAbsolute, join } from "@std/path";
+import { isAbsolute, join, resolve } from "@std/path";
 import { FirecrackerClient } from "../api/client.ts";
 import type { SnapshotCreateParams, SnapshotLoadParams } from "../api/types.ts";
 import {
@@ -454,7 +454,7 @@ export class Machine implements AsyncDisposable {
       }
 
       vmm = VmmProcess.spawn({
-        command: spec.firecrackerBin,
+        command: resolveBinaryPath(spec.firecrackerBin),
         args: [
           "--api-sock",
           apiSocket,
@@ -492,7 +492,13 @@ export class Machine implements AsyncDisposable {
   }
 
   static async #spawnJailed(spec: JailedSpawnSpec): Promise<Machine> {
-    const jailer = spec.jailer;
+    // Pin relative binary paths to our cwd before anything else consumes
+    // them (spawn, --exec-file, chroot layout are all path-sensitive).
+    const jailer: JailerOptions = {
+      ...spec.jailer,
+      jailerBin: resolveBinaryPath(spec.jailer.jailerBin),
+      firecrackerBin: resolveBinaryPath(spec.jailer.firecrackerBin),
+    };
     validateJailerOptions(jailer);
     if (spec.registry === undefined) {
       throw new JailerConfigError(
@@ -987,6 +993,16 @@ export class Machine implements AsyncDisposable {
 
 function resolveIn(baseDir: string, path: string): string {
   return isAbsolute(path) ? path : join(baseDir, path);
+}
+
+/**
+ * Resolve a user-supplied binary path the way a shell would: bare names
+ * (no separator) are left for $PATH lookup; anything with a separator is
+ * resolved against the CALLER's cwd. Without this, `Deno.Command`'s `cwd`
+ * option would resolve relative binaries against the machine's state dir.
+ */
+function resolveBinaryPath(bin: string): string {
+  return bin.includes("/") && !isAbsolute(bin) ? resolve(bin) : bin;
 }
 
 // sun_path is 108 bytes on Linux and 104 on macOS; stay under both.

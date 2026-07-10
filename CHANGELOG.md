@@ -44,3 +44,5 @@ Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
   hybrid-vsock protocols over real Unix sockets with the real boot-phase state
   machine, fault injection, and request recording — test your platform without
   KVM.
+- Verified `deno compile` support with a CI smoke test
+  (`tests/smoke/compile_smoke.ts`) on Linux and macOS.

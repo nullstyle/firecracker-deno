@@ -92,3 +92,16 @@ jobs:
           FC_TEST_KERNEL: tests/assets/vmlinux
           FC_TEST_ROOTFS: tests/assets/rootfs.ext4
           FC_TEST_JAILER: tests/assets/jailer
+
+  compile-smoke:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno compile -A --output smoke-bin tests/smoke/compile_smoke.ts
+      - run: ./smoke-bin

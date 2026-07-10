@@ -126,7 +126,8 @@ deno task test:integration               # real VMs; Linux + /dev/kvm (+ sudo fo
 
 Integration tests boot real VMs and are gated behind Linux + `/dev/kvm`; CI runs
 them on `ubuntu-24.04` (GitHub-hosted x86_64 runners expose KVM), including a
-root-gated real-jailer matrix. Guides:
+root-gated real-jailer matrix. Compiled-binary support (`deno compile`) is
+verified by a CI smoke test (`tests/smoke/compile_smoke.ts`). Guides:
 
 - [Permissions](docs/permissions.md) — exact flags per feature
 - [Running jailed](docs/jailer.md) — threat model, path rules, exit authority

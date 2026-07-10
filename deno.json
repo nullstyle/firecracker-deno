@@ -5,6 +5,7 @@
   "exports": {
     ".": "./mod.ts",
     "./client": "./src/api/mod.ts",
+    "./vsock": "./src/vsock/mod.ts",
     "./types": "./src/api/types.ts",
     "./testing": "./testing/mod.ts"
   },

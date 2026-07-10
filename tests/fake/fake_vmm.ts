@@ -53,11 +53,32 @@ switch (mode) {
     if (bindDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, bindDelayMs));
     }
-    await FakeFirecracker.start({
+    const fake = await FakeFirecracker.start({
       dir: await Deno.makeTempDir({ prefix: "fake-vmm-" }),
       socketPath,
       onCtrlAltDel: () => setTimeout(() => Deno.exit(0), 5),
     });
+    const echoPort = Deno.env.get("FAKE_VMM_ECHO_PORT");
+    if (echoPort !== undefined) {
+      fake.onVsockPort(Number(echoPort), async (conn) => {
+        try {
+          const buf = new Uint8Array(4096);
+          while (true) {
+            const n = await conn.read(buf);
+            if (n === null) break;
+            await conn.write(buf.subarray(0, n));
+          }
+        } catch {
+          // peer closed
+        } finally {
+          try {
+            conn.close();
+          } catch {
+            // already closed
+          }
+        }
+      });
+    }
     console.error("fake-vmm: api ready");
     await forever();
     break;

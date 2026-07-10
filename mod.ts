@@ -52,6 +52,7 @@ export * from "./src/api/types.ts";
 export * from "./src/api/client.ts";
 export * from "./src/api/transport.ts";
 export * from "./src/machine/machine.ts";
+export * from "./src/vsock/mod.ts";
 export { applyVmConfig, type VmConfig } from "./src/machine/config.ts";
 export {
   escalatingShutdown,

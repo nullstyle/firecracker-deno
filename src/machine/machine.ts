@@ -22,6 +22,10 @@ import {
 import { escalatingShutdown } from "../process/shutdown.ts";
 import { VmmProcess } from "../process/supervisor.ts";
 import type { ShutdownOptions, VmmExit, VmState } from "../types.ts";
+import { VsockDialError } from "../errors.ts";
+import { connectVsock, type VsockDialOptions } from "../vsock/dial.ts";
+import type { VsockConn } from "../vsock/conn.ts";
+import { listenVsock, type VsockListener } from "../vsock/listen.ts";
 import { applyVmConfig, type VmConfig } from "./config.ts";
 import { LifecycleState } from "./state.ts";
 
@@ -108,6 +112,7 @@ export class Machine implements AsyncDisposable {
   #ownsStateDir: boolean;
   #shutdownResult: Promise<VmmExit> | null = null;
   #disposed = false;
+  #vsockListeners = new Set<VsockListener>();
 
   private constructor(
     vmm: VmmProcess,
@@ -244,6 +249,47 @@ export class Machine implements AsyncDisposable {
   }
 
   /**
+   * Vsock operations against this machine's vsock device (requires
+   * `config.vsock`). Connections are standard `Deno.Conn`s; listeners
+   * created here are closed and unlinked during disposal.
+   */
+  readonly vsock: {
+    /** Dial a guest port; see `connectVsock`. Requires a running machine. */
+    connect: (port: number, opts?: VsockDialOptions) => Promise<VsockConn>;
+    /** Listen for guest-initiated connections; see `listenVsock`. */
+    listen: (port: number) => VsockListener;
+  } = {
+    connect: async (port, opts) => {
+      this.#lifecycle.assert("vsock.connect", "running");
+      return await connectVsock(this.#requireVsockUds(port), port, opts);
+    },
+    listen: (port) => {
+      this.#lifecycle.assert(
+        "vsock.listen",
+        "configured",
+        "starting",
+        "running",
+        "paused",
+      );
+      const listener = listenVsock(this.#requireVsockUds(port), port);
+      this.#vsockListeners.add(listener);
+      return listener;
+    },
+  };
+
+  #requireVsockUds(port: number): string {
+    if (this.paths.vsockUds === undefined) {
+      throw new VsockDialError({
+        reason: "socket-missing",
+        udsPath: "<no vsock device configured>",
+        port,
+        attempts: 0,
+      });
+    }
+    return this.paths.vsockUds;
+  }
+
+  /**
    * Escalating shutdown: `SendCtrlAltDel` (when running, x86_64) →
    * `SIGTERM` → `SIGKILL`, each stage deadline-bounded. Idempotent —
    * concurrent and repeated calls share one outcome. Resolves with the
@@ -320,6 +366,15 @@ export class Machine implements AsyncDisposable {
     const steps: CleanupStep[] = [
       removePathStep("unlink-api-socket", this.paths.apiSocket),
     ];
+    for (const listener of this.#vsockListeners) {
+      steps.push({
+        step: "close-vsock-listener",
+        path: listener.path,
+        run: async () => {
+          await listener[Symbol.asyncDispose]();
+        },
+      });
+    }
     if (this.paths.vsockUds !== undefined) {
       steps.push(removePathStep("unlink-vsock-uds", this.paths.vsockUds));
     }

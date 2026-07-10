@@ -15,6 +15,11 @@ export class DirRegistry implements VmRegistry {
   /** The directory holding `<vmId>.json` records (created on first put). */
   readonly dir: string;
 
+  // Serializes mutations per vmId within this process, so concurrent
+  // read-modify-write updates (e.g. fire-and-forget listener journaling)
+  // cannot lose each other's patches.
+  #locks = new Map<string, Promise<unknown>>();
+
   /** Use (and create on first put) `dir` as the record directory. */
   constructor(dir: string) {
     this.dir = dir;
@@ -22,25 +27,39 @@ export class DirRegistry implements VmRegistry {
 
   /** Commit `record` atomically (temp file + rename). */
   async put(record: JailRecord): Promise<void> {
-    await Deno.mkdir(this.dir, { recursive: true });
-    await this.#writeAtomic(record.vmId, record);
+    return await this.#locked(record.vmId, async () => {
+      await Deno.mkdir(this.dir, { recursive: true });
+      await this.#writeAtomic(record.vmId, record);
+    });
   }
 
   /** Merge `patch` into the stored record (read + atomic rewrite). */
   async update(vmId: string, patch: Partial<JailRecord>): Promise<void> {
-    const existing = JSON.parse(
-      await Deno.readTextFile(this.#path(vmId)),
-    ) as JailRecord;
-    await this.#writeAtomic(vmId, { ...existing, ...patch, vmId });
+    return await this.#locked(vmId, async () => {
+      const existing = JSON.parse(
+        await Deno.readTextFile(this.#path(vmId)),
+      ) as JailRecord;
+      await this.#writeAtomic(vmId, { ...existing, ...patch, vmId });
+    });
   }
 
   /** Delete the record; already-gone is not an error. */
   async remove(vmId: string): Promise<void> {
-    try {
-      await Deno.remove(this.#path(vmId));
-    } catch (err) {
-      if (!(err instanceof Deno.errors.NotFound)) throw err;
-    }
+    return await this.#locked(vmId, async () => {
+      try {
+        await Deno.remove(this.#path(vmId));
+      } catch (err) {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      }
+    });
+  }
+
+  #locked<T>(vmId: string, fn: () => Promise<T>): Promise<T> {
+    this.#path(vmId); // validate before queueing
+    const prev = this.#locks.get(vmId) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    this.#locks.set(vmId, run.then(() => {}, () => {}));
+    return run;
   }
 
   /** All parseable records (torn tmp files and corrupt JSON are skipped). */
@@ -79,7 +98,9 @@ export class DirRegistry implements VmRegistry {
 
   async #writeAtomic(vmId: string, record: JailRecord): Promise<void> {
     const path = this.#path(vmId);
-    const tmp = `${path}.tmp`;
+    // Unique temp name: a fixed suffix would let two writers (or two
+    // processes) truncate each other's in-flight temp file.
+    const tmp = `${path}.${crypto.randomUUID()}.tmp`;
     await Deno.writeTextFile(tmp, JSON.stringify(record, null, 2) + "\n");
     await Deno.rename(tmp, path);
   }

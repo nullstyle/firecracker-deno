@@ -10,7 +10,12 @@
 import { removePathStep, runCleanupSteps } from "../cleanup.ts";
 import { CleanupError } from "../errors.ts";
 import { delay } from "../internal/async.ts";
-import { pidAlive, pidLooksLikeVmm } from "../internal/liveness.ts";
+import {
+  findVmmPidByCmdline,
+  idCmdlineToken,
+  pidAlive,
+  pidMatchesVmm,
+} from "../internal/liveness.ts";
 import type { JailRecord, VmRegistry } from "./registry.ts";
 
 /** Options for {@linkcode reconcile}. */
@@ -59,18 +64,28 @@ export async function reconcile(
   for (const record of await registry.list()) {
     opts.signal?.throwIfAborted();
     try {
-      const alive = record.pid !== null && pidAlive(record.pid) &&
-        await pidLooksLikeVmm(record.pid, record.apiSocketPath);
+      // Identity tokens: the --id argv token works inside and outside a
+      // chroot; the host-view socket path additionally matches direct VMMs.
+      const tokens = [idCmdlineToken(record.vmId), record.apiSocketPath];
+      let pid = record.pid;
+      if (
+        pid !== null && !(pidAlive(pid) && await pidMatchesVmm(pid, tokens))
+      ) {
+        pid = null; // dead, or the pid was recycled by an unrelated process
+      }
+      if (pid === null) {
+        // Journal-gap rescue: the record may predate the pid update (crash
+        // between spawn and journal), or the pid may have been recycled —
+        // look for the actual VMM by cmdline before touching anything.
+        pid = await findVmmPidByCmdline(tokens);
+      }
+      const alive = pid !== null && pidAlive(pid);
       if (alive && opts.killLive !== true) {
         result.stillRunning.push(record.vmId);
         continue;
       }
       if (alive) {
-        await killAndWait(
-          record.pid!,
-          opts.killTimeoutMs ?? 5_000,
-          opts.signal,
-        );
+        await killAndWait(pid!, opts.killTimeoutMs ?? 5_000, opts.signal);
       }
       await reclaimFiles(record);
       await registry.remove(record.vmId);

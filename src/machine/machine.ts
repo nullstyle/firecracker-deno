@@ -32,8 +32,18 @@ import {
   hostPathOf,
   type JailPaths,
 } from "../jailer/paths.ts";
+import { delay } from "../internal/async.ts";
+import {
+  findVmmPidByCmdline,
+  idCmdlineToken,
+  pidAlive,
+} from "../internal/liveness.ts";
 import { stageChroot } from "../jailer/stage.ts";
-import { ReparentedVmm, waitForPidfile } from "../process/pidfile.ts";
+import {
+  ReparentedVmm,
+  tryReadPidfile,
+  waitForPidfile,
+} from "../process/pidfile.ts";
 import { escalatingShutdown } from "../process/shutdown.ts";
 import { type VmmHandle, VmmProcess } from "../process/supervisor.ts";
 import type { VmRegistry } from "../registry/registry.ts";
@@ -416,42 +426,57 @@ export class Machine implements AsyncDisposable {
         ? { vsockUds: resolveIn(stateDir, spec.vsockPath) }
         : {}),
     };
-    assertSocketPathLength(paths.apiSocket, "API socket path");
-    if (paths.vsockUds !== undefined) {
-      assertSocketPathLength(paths.vsockUds, "vsock UDS path");
-    }
+    let vmm: VmmProcess;
+    let journaled = false;
+    try {
+      assertSocketPathLength(paths.apiSocket, "API socket path");
+      if (paths.vsockUds !== undefined) {
+        assertSocketPathLength(paths.vsockUds, "vsock UDS path");
+      }
 
-    // Journal-before-spawn: the record must exist before the process does,
-    // so no crash window can leave an unrecorded VMM behind.
-    if (spec.registry !== undefined) {
-      await spec.registry.put({
-        version: 1,
-        vmId,
-        pid: null,
-        apiSocketPath: apiSocket,
-        stateDir,
-        ownsStateDir,
-        ...(paths.vsockUds !== undefined
-          ? { vsockUdsPath: paths.vsockUds }
-          : {}),
-        vsockListenerPaths: [],
-        createdAt: new Date().toISOString(),
+      // Journal-before-spawn: the record must exist before the process
+      // does, so no crash window can leave an unrecorded VMM behind.
+      if (spec.registry !== undefined) {
+        await spec.registry.put({
+          version: 1,
+          vmId,
+          pid: null,
+          apiSocketPath: apiSocket,
+          stateDir,
+          ownsStateDir,
+          ...(paths.vsockUds !== undefined
+            ? { vsockUdsPath: paths.vsockUds }
+            : {}),
+          vsockListenerPaths: [],
+          createdAt: new Date().toISOString(),
+        });
+        journaled = true;
+      }
+
+      vmm = VmmProcess.spawn({
+        command: spec.firecrackerBin,
+        args: [
+          "--api-sock",
+          apiSocket,
+          "--id",
+          vmId,
+          ...(spec.extraArgs ?? []),
+        ],
+        cwd: stateDir,
       });
+    } catch (err) {
+      // Nothing is running (validation, journaling, or the spawn itself
+      // failed) — undo what this call created: a failed create leaks
+      // nothing, registry or not.
+      if (journaled) await spec.registry!.remove(vmId).catch(() => {});
+      if (ownsStateDir) {
+        await Deno.remove(stateDir, { recursive: true }).catch(() => {});
+      }
+      throw err;
     }
-
-    const vmm = VmmProcess.spawn({
-      command: spec.firecrackerBin,
-      args: [
-        "--api-sock",
-        apiSocket,
-        "--id",
-        vmId,
-        ...(spec.extraArgs ?? []),
-      ],
-      cwd: stateDir,
-    });
     if (spec.registry !== undefined) {
-      // Best-effort: a record with pid null still reconciles via its files.
+      // Best-effort: a record with pid null still reconciles via its files
+      // and reconcile()'s cmdline scan.
       await spec.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
     }
     return new Machine({
@@ -521,16 +546,28 @@ export class Machine implements AsyncDisposable {
     const plan = await stageChroot(jail, jailer);
     const stagedPaths = new Map(plan.map((a) => [a.hostPath, a.jailPath]));
 
-    const jailerProc = VmmProcess.spawn({
-      command: jailer.jailerBin,
-      args: buildJailerArgv(jailer, [
-        "--api-sock",
-        socketJailPath,
-        "--id",
-        vmId,
-        ...(spec.extraArgs ?? []),
-      ]),
-    });
+    let jailerProc: VmmProcess;
+    try {
+      jailerProc = VmmProcess.spawn({
+        command: jailer.jailerBin,
+        args: buildJailerArgv(jailer, [
+          "--api-sock",
+          socketJailPath,
+          "--id",
+          vmId,
+          ...(spec.extraArgs ?? []),
+        ]),
+      });
+    } catch (err) {
+      // The jailer never started: unwind the staged chroot and the record.
+      const failures = await runCleanupSteps([
+        removePathStep("remove-chroot", jail.jailRoot, { recursive: true }),
+      ]);
+      if (failures.length === 0) {
+        await spec.registry.remove(vmId).catch(() => {});
+      }
+      throw err;
+    }
 
     const reparented = jailer.daemonize === true || jailer.newPidNs === true;
     let vmm: VmmHandle = jailerProc;
@@ -543,11 +580,36 @@ export class Machine implements AsyncDisposable {
         });
         vmm = new ReparentedVmm(pid, {
           jailerStderr: () => jailerProc.stderrTail(),
+          identityToken: idCmdlineToken(vmId),
         });
       }
     } catch (err) {
       jailerProc.kill("SIGKILL");
       await jailerProc.exited;
+      // A reparented Firecracker may be alive even though the pidfile never
+      // surfaced. Confirm death (pidfile re-read, then cmdline scan) before
+      // touching any files — never rm a live VMM's chroot.
+      let orphan = await tryReadPidfile(jail.pidfileHost);
+      if (orphan === null) {
+        orphan = await findVmmPidByCmdline([idCmdlineToken(vmId)]);
+      }
+      if (orphan !== null && pidAlive(orphan)) {
+        try {
+          Deno.kill(orphan, "SIGKILL");
+        } catch {
+          // gone between probe and kill
+        }
+        const deadline = performance.now() + 2_000;
+        while (pidAlive(orphan) && performance.now() < deadline) {
+          await delay(50);
+        }
+        if (pidAlive(orphan)) {
+          // Unkillable: keep the record (now with the pid) for reconcile
+          // and leave the chroot alone.
+          await spec.registry.update(vmId, { pid: orphan }).catch(() => {});
+          throw err;
+        }
+      }
       const failures = await runCleanupSteps([
         removePathStep("remove-chroot", jail.jailRoot, { recursive: true }),
       ]);

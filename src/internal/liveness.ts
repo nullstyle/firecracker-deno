@@ -1,5 +1,6 @@
 /**
- * Internal: process liveness probing for reconcile.
+ * Internal: process liveness and identity probing for reconcile and
+ * pidfile-based exit authority.
  *
  * @module
  */
@@ -19,19 +20,69 @@ export function pidAlive(pid: number): boolean {
 }
 
 /**
- * Best-effort pid-reuse guard: on Linux, require the process cmdline to
- * mention the record's API socket path before treating the pid as "our"
- * VMM. Returns true when the check is impossible (non-Linux, no access) —
- * reconcile then relies on the caller's `killLive` intent.
+ * The NUL-delimited `--id <vmId>` sequence as it appears in
+ * `/proc/<pid>/cmdline`. Both spawn paths pass `--id`, and unlike socket
+ * paths it reads identically inside and outside a chroot — making it the
+ * one identity token that works for jailed VMMs too.
  */
-export async function pidLooksLikeVmm(
-  pid: number,
-  apiSocketPath: string,
-): Promise<boolean> {
+export function idCmdlineToken(vmId: string): string {
+  return `\0--id\0${vmId}\0`;
+}
+
+function readCmdline(pid: number): Promise<string | null> {
+  return Deno.readTextFile(`/proc/${pid}/cmdline`).catch(() => null);
+}
+
+function readCmdlineSync(pid: number): string | null {
   try {
-    const cmdline = await Deno.readTextFile(`/proc/${pid}/cmdline`);
-    return cmdline.includes(apiSocketPath);
+    return Deno.readTextFileSync(`/proc/${pid}/cmdline`);
   } catch {
-    return true;
+    return null;
   }
+}
+
+function matches(cmdline: string, tokens: string[]): boolean {
+  return tokens.some((t) => t !== "" && cmdline.includes(t));
+}
+
+/**
+ * Best-effort pid-reuse guard: on Linux, require the process cmdline to
+ * mention one of `tokens` (an {@linkcode idCmdlineToken} or a socket path)
+ * before treating the pid as "our" VMM. Returns true when the check is
+ * impossible (non-Linux, no access) — callers then rely on plain liveness.
+ */
+export async function pidMatchesVmm(
+  pid: number,
+  tokens: string[],
+): Promise<boolean> {
+  const cmdline = await readCmdline(pid);
+  return cmdline === null ? true : matches(cmdline, tokens);
+}
+
+/** Synchronous variant of {@linkcode pidMatchesVmm} (for signal paths). */
+export function pidMatchesVmmSync(pid: number, tokens: string[]): boolean {
+  const cmdline = readCmdlineSync(pid);
+  return cmdline === null ? true : matches(cmdline, tokens);
+}
+
+/**
+ * Linux best-effort orphan finder: scan `/proc` for a live process (other
+ * than ourselves) whose cmdline mentions one of `tokens`. Returns null
+ * when nothing matches or `/proc` is unavailable (non-Linux).
+ */
+export async function findVmmPidByCmdline(
+  tokens: string[],
+): Promise<number | null> {
+  try {
+    for await (const entry of Deno.readDir("/proc")) {
+      if (!/^\d+$/.test(entry.name)) continue;
+      const pid = Number(entry.name);
+      if (pid === Deno.pid) continue;
+      const cmdline = await readCmdline(pid);
+      if (cmdline !== null && matches(cmdline, tokens)) return pid;
+    }
+  } catch {
+    // no /proc here
+  }
+  return null;
 }

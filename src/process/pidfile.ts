@@ -13,7 +13,11 @@
 
 import { JailerConfigError } from "../errors.ts";
 import { delay } from "../internal/async.ts";
-import { pidAlive } from "../internal/liveness.ts";
+import {
+  pidAlive,
+  pidMatchesVmm,
+  pidMatchesVmmSync,
+} from "../internal/liveness.ts";
 import type { VmmExit } from "../types.ts";
 import type { VmmHandle, VmmProcess } from "./supervisor.ts";
 
@@ -39,15 +43,19 @@ export async function waitForPidfile(
   while (performance.now() < deadline) {
     opts.signal?.throwIfAborted();
     const exit = opts.jailer.exit;
-    if (exit !== null && (exit.code ?? 0) !== 0) {
+    // Only a clean zero exit is the expected daemonize/new-pid-ns handoff;
+    // a non-zero code OR a signal death means the jailer failed — fail fast.
+    if (exit !== null && (exit.signal !== null || (exit.code ?? 0) !== 0)) {
       throw new JailerConfigError(
-        `jailer exited with code ${exit.code} before writing a pidfile` +
+        `jailer exited (${
+          exit.signal !== null ? `signal ${exit.signal}` : `code ${exit.code}`
+        }) before writing a pidfile` +
           (exit.stderrTail.trim() === ""
             ? ""
             : `; stderr: ${exit.stderrTail.trim()}`),
       );
     }
-    const pid = await readPidfile(path);
+    const pid = await tryReadPidfile(path);
     if (pid !== null) return pid;
     await delay(intervalMs, opts.signal);
   }
@@ -59,11 +67,14 @@ export async function waitForPidfile(
   );
 }
 
-async function readPidfile(path: string): Promise<number | null> {
+/**
+ * Read a pid from `path`, or null when the file is missing, empty, or not
+ * yet fully written (the write-then-exec race).
+ */
+export async function tryReadPidfile(path: string): Promise<number | null> {
   try {
     const text = await Deno.readTextFile(path);
     const pid = Number.parseInt(text.trim(), 10);
-    // Guard the write-then-exec race: an empty or partial file isn't ready.
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
@@ -84,18 +95,34 @@ export class ReparentedVmm implements VmmHandle {
 
   #exit: VmmExit | null = null;
   #jailerStderr: () => string;
+  #identityTokens: string[];
 
-  /** Watch `pid`; `jailerStderr` supplies diagnostics captured pre-detach. */
+  /**
+   * Watch `pid`; `jailerStderr` supplies diagnostics captured pre-detach.
+   * `identityToken` (e.g. the VMM's `--id` cmdline token) guards against
+   * pid reuse: once the pid no longer looks like our VMM, it is treated as
+   * exited, and `kill` refuses to signal the recycled pid. On systems
+   * without `/proc` the guard degrades to plain liveness.
+   */
   constructor(
     pid: number,
-    opts: { jailerStderr: () => string; pollIntervalMs?: number },
+    opts: {
+      jailerStderr: () => string;
+      pollIntervalMs?: number;
+      identityToken?: string;
+    },
   ) {
     this.pid = pid;
     const jailerStderr = opts.jailerStderr;
     this.#jailerStderr = jailerStderr;
+    const tokens = opts.identityToken === undefined ? [] : [opts.identityToken];
+    this.#identityTokens = tokens;
     const pollIntervalMs = opts.pollIntervalMs ?? 100;
     this.exited = (async () => {
-      while (pidAlive(pid)) {
+      while (
+        pidAlive(pid) &&
+        (tokens.length === 0 || await pidMatchesVmm(pid, tokens))
+      ) {
         await delay(pollIntervalMs);
       }
       this.#exit = {
@@ -123,9 +150,18 @@ export class ReparentedVmm implements VmmHandle {
     return "";
   }
 
-  /** Signal the pid directly; already-gone processes are not an error. */
+  /**
+   * Signal the pid directly; already-gone processes are not an error, and
+   * a pid that no longer looks like our VMM (pid reuse) is left alone.
+   */
   kill(signal: Deno.Signal): void {
     if (this.#exit !== null) return;
+    if (
+      this.#identityTokens.length > 0 &&
+      !pidMatchesVmmSync(this.pid, this.#identityTokens)
+    ) {
+      return;
+    }
     try {
       Deno.kill(this.pid, signal);
     } catch {

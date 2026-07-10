@@ -540,7 +540,12 @@ export class FirecrackerClient implements Disposable {
     while (performance.now() < deadline) {
       opts?.signal?.throwIfAborted();
       try {
-        return await this.getInstanceInfo({ signal: opts?.signal });
+        // Bound each attempt by the remaining budget: a socket that accepts
+        // but never answers must not stretch waitReady past its deadline.
+        const attemptBudget = Math.max(1, deadline - performance.now());
+        const signals = [AbortSignal.timeout(attemptBudget)];
+        if (opts?.signal !== undefined) signals.push(opts.signal);
+        return await this.getInstanceInfo({ signal: AbortSignal.any(signals) });
       } catch (err) {
         if (!(err instanceof TransportError)) throw err;
         lastError = err;

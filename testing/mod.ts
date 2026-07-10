@@ -76,6 +76,8 @@ export type VsockPortHandler = (conn: Deno.Conn) => void | Promise<void>;
 export interface FakeFirecrackerOptions {
   /** Directory for the sockets; defaults to a fresh temp dir (removed on dispose). */
   dir?: string;
+  /** Exact API socket path to bind. @default `<dir>/api.sock` */
+  socketPath?: string;
   /** Instance id reported by `GET /`. @default "fake-fc" */
   id?: string;
   /** Version reported by `GET /version`. @default "1.16.1" */
@@ -140,7 +142,7 @@ export class FakeFirecracker implements AsyncDisposable {
   ) {
     this.dir = dir;
     this.#ownsDir = ownsDir;
-    this.socketPath = join(dir, "api.sock");
+    this.socketPath = opts.socketPath ?? join(dir, "api.sock");
     this.#id = opts.id ?? "fake-fc";
     this.#version = opts.version ?? "1.16.1";
     this.#onCtrlAltDel = opts.onCtrlAltDel;

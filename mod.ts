@@ -51,3 +51,17 @@ export { FIRECRACKER_COMPAT, type FirecrackerCompat } from "./src/compat.ts";
 export * from "./src/api/types.ts";
 export * from "./src/api/client.ts";
 export * from "./src/api/transport.ts";
+export * from "./src/machine/machine.ts";
+export { applyVmConfig, type VmConfig } from "./src/machine/config.ts";
+export {
+  escalatingShutdown,
+  SHUTDOWN_DEFAULTS,
+  type ShutdownTarget,
+} from "./src/process/shutdown.ts";
+export { VmmProcess, type VmmSpawnOptions } from "./src/process/supervisor.ts";
+export {
+  cleanupError,
+  type CleanupStep,
+  removePathStep,
+  runCleanupSteps,
+} from "./src/cleanup.ts";

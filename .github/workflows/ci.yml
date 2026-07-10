@@ -43,3 +43,45 @@ jobs:
         with:
           deno-version: ${{ matrix.deno }}
       - run: deno task test
+
+  integration:
+    # Real Firecracker on KVM. GitHub-hosted x86_64 Linux runners expose
+    # /dev/kvm; the udev rule below makes it usable without root.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -e /dev/kvm || { echo "::error::/dev/kvm missing on this runner"; exit 1; }
+          sudo modprobe vhost_vsock || true
+      - name: Cache Firecracker assets
+        uses: actions/cache@v4
+        with:
+          path: tests/assets
+          key: fc-assets-${{ hashFiles('spec/versions.json') }}-x86_64-v1
+      - name: Fetch Firecracker binaries, kernel, and rootfs
+        run: deno run -A tools/fetch-firecracker.ts
+      - name: Build ext4 rootfs from the CI squashfs
+        run: |
+          cd tests/assets
+          if [ ! -f rootfs.ext4 ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q squashfs-tools
+            sudo unsquashfs -d squashfs-root rootfs.squashfs
+            sudo chown -R root:root squashfs-root
+            truncate -s 1G rootfs.ext4
+            sudo mkfs.ext4 -q -d squashfs-root -F rootfs.ext4
+            sudo rm -rf squashfs-root
+          fi
+      - name: Run integration tests
+        run: deno task test:integration
+        env:
+          FC_TEST_BIN: tests/assets/firecracker
+          FC_TEST_KERNEL: tests/assets/vmlinux
+          FC_TEST_ROOTFS: tests/assets/rootfs.ext4

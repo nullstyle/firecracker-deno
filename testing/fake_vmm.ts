@@ -14,7 +14,7 @@
  *   only SIGKILL works.
  */
 
-import { FakeFirecracker } from "../../testing/mod.ts";
+import { FakeFirecracker } from "./mod.ts";
 
 const sockIdx = Deno.args.indexOf("--api-sock");
 const socketPath = sockIdx === -1 ? undefined : Deno.args[sockIdx + 1];

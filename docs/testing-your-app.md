@@ -55,11 +55,32 @@ listener socket (`listenVsock` / `vm.vsock.listen`) the way a guest would.
 
 ## Testing supervision paths
 
-For code that supervises the _process_ (not just the API), spawn the fake behind
-a tiny executable shim and hand that to `Machine` as `firecrackerBin` — see
-[`tests/fake/fake_vmm.ts`](../tests/fake/fake_vmm.ts) and its helper for the
-patterns this library uses (bind-delay, exit-before-bind, SIGTERM-ignoring
-modes).
+For code that supervises the _process_ (not just the API), the executable shims
+this library uses are public too:
+
+```ts
+import {
+  makeFakeJailerBin,
+  makeFakeVmmBin,
+} from "@nullstyle/firecracker/testing";
+```
+
+`makeFakeVmmBin(dir, mode)` writes a spawnable Firecracker double you hand to
+`Machine` as `firecrackerBin`. Modes: `"ready"`, `"exit-before-bind"`,
+`"never-bind"`, and `"ignore-sigterm"` (plus `FAKE_VMM_BIND_DELAY_MS` /
+`FAKE_VMM_ECHO_PORT` via its `env` parameter). `makeFakeJailerBin(dir)` emulates
+the jailer's process contract for `jailerBin`.
+
+```ts
+const dir = await Deno.makeTempDir();
+const bin = await makeFakeVmmBin(dir, "ready");
+await using vm = await Machine.launch({
+  firecrackerBin: bin,
+  config: { boot_source: { kernel_image_path: "/vmlinux" } },
+  stateDir: `${dir}/state`,
+});
+// vm.state === "running" — spawn, readiness, and shutdown paths all real
+```
 
 ## Trust, but verify
 

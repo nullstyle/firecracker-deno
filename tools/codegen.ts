@@ -85,6 +85,9 @@ export async function generate(): Promise<{
   });
   const ast = await openapiTS(converted.openapi, {
     alphabetize: true,
+    // A schema `default` means Firecracker fills the value in — callers may
+    // omit it. Without this, defaulted fields are generated as required.
+    defaultNonNullable: false,
   });
   const body = astToString(ast);
 

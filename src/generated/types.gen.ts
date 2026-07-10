@@ -732,14 +732,14 @@ export interface components {
              * @default Unsafe
              * @enum {string}
              */
-            cache_type: "Unsafe" | "Writeback";
+            cache_type?: "Unsafe" | "Writeback";
             drive_id: string;
             /**
              * @description Type of the IO engine used by the device. "Async" is supported on host kernels newer than 5.10.51. This field is optional for virtio-block config and should be omitted for vhost-user-block configuration.
              * @default Sync
              * @enum {string}
              */
-            io_engine: "Sync" | "Async";
+            io_engine?: "Sync" | "Async";
             /** @description Is block read only. This field is required for virtio-block config and should be omitted for vhost-user-block configuration. */
             is_read_only?: boolean;
             is_root_device: boolean;
@@ -811,7 +811,7 @@ export interface components {
              * @default Info
              * @enum {string}
              */
-            level: "Error" | "Warning" | "Info" | "Debug" | "Trace" | "Off";
+            level?: "Error" | "Warning" | "Info" | "Debug" | "Trace" | "Off";
             /** @description Path to the named pipe or file for the human readable log output. */
             log_path?: string;
             /**
@@ -823,12 +823,12 @@ export interface components {
              * @description Whether or not to output the level in the logs.
              * @default false
              */
-            show_level: boolean;
+            show_level?: boolean;
             /**
              * @description Whether or not to include the file path and line number of the log's origin.
              * @default false
              */
-            show_log_origin: boolean;
+            show_log_origin?: boolean;
         };
         /** @description Describes the number of vCPUs, memory size, SMT capabilities, huge page configuration and the CPU template. */
         MachineConfiguration: {
@@ -844,12 +844,12 @@ export interface components {
              * @description Flag for enabling/disabling simultaneous multithreading. Can be enabled only on x86.
              * @default false
              */
-            smt: boolean;
+            smt?: boolean;
             /**
              * @description Enable dirty page tracking. If this is enabled, then incremental guest memory snapshots can be created. These belong to diff snapshots, which contain, besides the microVM state, only the memory dirtied since a previous snapshot. Full snapshots each contain a full copy of the guest memory.
              * @default false
              */
-            track_dirty_pages: boolean;
+            track_dirty_pages?: boolean;
             /** @description Number of vCPUs (either 1 or an even number) */
             vcpu_count: number;
         };
@@ -865,12 +865,12 @@ export interface components {
              * @description (Logical) Block size for the hotpluggable memory in MiB. This will determine the logical granularity of hot-plug memory for the guest. Refer to the device documentation on how to tune this value.
              * @default 2
              */
-            block_size_mib: number;
+            block_size_mib?: number;
             /**
              * @description Slot size for the hotpluggable memory in MiB. This will determine the granularity of hot-plug memory from the host. Refer to the device documentation on how to tune this value.
              * @default 128
              */
-            slot_size_mib: number;
+            slot_size_mib?: number;
             /** @description Total size of the hotpluggable memory in MiB. */
             total_size_mib?: number;
         };
@@ -903,13 +903,13 @@ export interface components {
              * @description MMDS operates compatibly with EC2 IMDS (i.e. responds "text/plain" content regardless of Accept header in requests).
              * @default false
              */
-            imds_compat: boolean;
+            imds_compat?: boolean;
             /**
              * Format: 169.254.([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-4]).([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])
              * @description A valid IPv4 link-local address.
              * @default 169.254.169.254
              */
-            ipv4_address: string;
+            ipv4_address?: string;
             /** @description List of the network interface IDs capable of forwarding packets to the MMDS. Network interface IDs mentioned must be valid at the time of this request. The net device model will reply to HTTP GET requests sent to the MMDS address via the interfaces mentioned. In this case, both ARP requests and TCP segments heading to `ipv4_address` are intercepted by the device model, and do not reach the associated TAP device. */
             network_interfaces: string[];
             /**
@@ -917,7 +917,7 @@ export interface components {
              * @default V1
              * @enum {string}
              */
-            version: "V1" | "V2";
+            version?: "V1" | "V2";
         };
         /** @description Describes the contents of MMDS in JSON format. */
         MmdsContentsObject: {

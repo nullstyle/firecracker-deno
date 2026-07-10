@@ -149,12 +149,18 @@ export class ReadinessTimeoutError extends FirecrackerError {
   readonly stderrTail: string;
 
   constructor(
-    opts: { socketPath: string; waitedMs: number; stderrTail: string },
+    opts: {
+      socketPath: string;
+      waitedMs: number;
+      stderrTail: string;
+      cause?: unknown;
+    },
   ) {
     const tail = opts.stderrTail.trim();
     super(
       `Firecracker API socket ${opts.socketPath} not ready after ${opts.waitedMs}ms` +
         (tail === "" ? "" : `; stderr tail: ${lastChars(tail, 512)}`),
+      { cause: opts.cause },
     );
     this.name = "ReadinessTimeoutError";
     this.socketPath = opts.socketPath;

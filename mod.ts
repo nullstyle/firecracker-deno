@@ -49,3 +49,5 @@ export * from "./src/errors.ts";
 export * from "./src/types.ts";
 export { FIRECRACKER_COMPAT, type FirecrackerCompat } from "./src/compat.ts";
 export * from "./src/api/types.ts";
+export * from "./src/api/client.ts";
+export * from "./src/api/transport.ts";

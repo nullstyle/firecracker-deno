@@ -44,5 +44,10 @@ Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
   hybrid-vsock protocols over real Unix sockets with the real boot-phase state
   machine, fault injection, and request recording — test your platform without
   KVM.
+- **Process-level test doubles** (`./testing`): `makeFakeVmmBin` (spawnable
+  fake-VMM shim with ready / exit-before-bind / never-bind / ignore-sigterm
+  modes) and `makeFakeJailerBin` (fake jailer shim emulating chroot layout,
+  `--api-sock` translation, pidfile, and reparenting) — unit-test process
+  supervision without KVM.
 - Verified `deno compile` support with a CI smoke test
   (`tests/smoke/compile_smoke.ts`) on Linux and macOS.

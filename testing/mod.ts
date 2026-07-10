@@ -52,6 +52,8 @@ import type {
 } from "../src/api/types.ts";
 import { readLineBytewise, writeAll } from "../src/internal/line_reader.ts";
 
+export * from "./process.ts";
+
 /** One request the fake has served, in arrival order. */
 export interface RecordedRequest {
   /** HTTP method, uppercase. */

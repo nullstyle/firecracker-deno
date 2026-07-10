@@ -26,6 +26,7 @@ import { VsockDialError } from "../errors.ts";
 import { connectVsock, type VsockDialOptions } from "../vsock/dial.ts";
 import type { VsockConn } from "../vsock/conn.ts";
 import { listenVsock, type VsockListener } from "../vsock/listen.ts";
+import type { VmRegistry } from "../registry/registry.ts";
 import { applyVmConfig, type VmConfig } from "./config.ts";
 import { LifecycleState } from "./state.ts";
 
@@ -59,6 +60,13 @@ export interface MachineOptions {
   extraArgs?: string[];
   /** Aborts `create()` while it waits for readiness. */
   signal?: AbortSignal;
+  /**
+   * Crash-recovery journal. When given, a record naming every reclaimable
+   * resource is committed **before** the VMM spawns and removed only after
+   * disposal fully reclaims it — so a supervisor crash (SIGKILL/OOM) can
+   * always be repaired by running `reconcile(registry)` at next startup.
+   */
+  registry?: VmRegistry;
 }
 
 /**
@@ -106,6 +114,9 @@ export class Machine implements AsyncDisposable {
    */
   readonly exited: Promise<VmmExit>;
 
+  /** This machine's unique id (`options.id` or generated). */
+  readonly vmId: string;
+
   #vmm: VmmProcess;
   #lifecycle = new LifecycleState();
   #options: MachineOptions;
@@ -120,12 +131,14 @@ export class Machine implements AsyncDisposable {
     options: MachineOptions,
     paths: Machine["paths"],
     ownsStateDir: boolean,
+    vmId: string,
   ) {
     this.#vmm = vmm;
     this.client = client;
     this.#options = options;
     this.paths = paths;
     this.#ownsStateDir = ownsStateDir;
+    this.vmId = vmId;
     this.exited = vmm.exited;
     void vmm.exited.then((exit) => {
       this.#lifecycle.transition("exited", exit);
@@ -148,19 +161,8 @@ export class Machine implements AsyncDisposable {
       await Deno.makeTempDir({ prefix: "fc-vm-" });
     if (!ownsStateDir) await Deno.mkdir(stateDir, { recursive: true });
 
+    const vmId = options.id ?? `fc-${crypto.randomUUID()}`;
     const apiSocket = resolveIn(stateDir, options.socketPath ?? "fc.sock");
-    const args = [
-      "--api-sock",
-      apiSocket,
-      ...(options.id !== undefined ? ["--id", options.id] : []),
-      ...(options.extraArgs ?? []),
-    ];
-    const vmm = VmmProcess.spawn({
-      command: options.firecrackerBin,
-      args,
-      cwd: stateDir,
-    });
-    const client = new FirecrackerClient({ socketPath: apiSocket });
     const paths: Machine["paths"] = {
       apiSocket,
       stateDir,
@@ -168,7 +170,50 @@ export class Machine implements AsyncDisposable {
         ? { vsockUds: resolveIn(stateDir, options.config.vsock.uds_path) }
         : {}),
     };
-    const machine = new Machine(vmm, client, options, paths, ownsStateDir);
+
+    // Journal-before-spawn: the record must exist before the process does,
+    // so no crash window can leave an unrecorded VMM behind.
+    if (options.registry !== undefined) {
+      await options.registry.put({
+        version: 1,
+        vmId,
+        pid: null,
+        apiSocketPath: apiSocket,
+        stateDir,
+        ownsStateDir,
+        ...(paths.vsockUds !== undefined
+          ? { vsockUdsPath: paths.vsockUds }
+          : {}),
+        vsockListenerPaths: [],
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    const args = [
+      "--api-sock",
+      apiSocket,
+      "--id",
+      vmId,
+      ...(options.extraArgs ?? []),
+    ];
+    const vmm = VmmProcess.spawn({
+      command: options.firecrackerBin,
+      args,
+      cwd: stateDir,
+    });
+    if (options.registry !== undefined) {
+      // Best-effort: a record with pid null still reconciles via its files.
+      await options.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
+    }
+    const client = new FirecrackerClient({ socketPath: apiSocket });
+    const machine = new Machine(
+      vmm,
+      client,
+      options,
+      paths,
+      ownsStateDir,
+      vmId,
+    );
     try {
       await machine.#awaitApiReady(
         options.readinessTimeoutMs ?? 5_000,
@@ -273,6 +318,12 @@ export class Machine implements AsyncDisposable {
       );
       const listener = listenVsock(this.#requireVsockUds(port), port);
       this.#vsockListeners.add(listener);
+      if (this.#options.registry !== undefined) {
+        // Best-effort journal update; crash-window leak is one socket file.
+        void this.#options.registry.update(this.vmId, {
+          vsockListenerPaths: [...this.#vsockListeners].map((l) => l.path),
+        }).catch(() => {});
+      }
       return listener;
     },
   };
@@ -350,6 +401,16 @@ export class Machine implements AsyncDisposable {
     const confirmedDead = this.#vmm.exit !== null;
     if (confirmedDead) {
       failures.push(...await runCleanupSteps(this.#fileCleanupSteps()));
+    }
+    if (
+      this.#options.registry !== undefined && confirmedDead &&
+      failures.length === 0
+    ) {
+      try {
+        await this.#options.registry.remove(this.vmId);
+      } catch (cause) {
+        failures.push({ step: "registry-remove", cause });
+      }
     }
     this.#lifecycle.transition("exited", this.#vmm.exit ?? undefined);
     this.#lifecycle.transition("cleaned");
@@ -431,7 +492,10 @@ export class Machine implements AsyncDisposable {
     this.#lifecycle.transition("cleaned");
     this.#disposed = true;
     // Best effort: the original create() error is what the caller needs.
-    await runCleanupSteps(this.#fileCleanupSteps());
+    const failures = await runCleanupSteps(this.#fileCleanupSteps());
+    if (this.#options.registry !== undefined && failures.length === 0) {
+      await this.#options.registry.remove(this.vmId).catch(() => {});
+    }
   }
 }
 

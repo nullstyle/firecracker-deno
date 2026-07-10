@@ -21,6 +21,15 @@ jobs:
       - run: deno check .
       - run: deno publish --dry-run
 
+  spec-drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno task spec:drift
+
   test:
     strategy:
       fail-fast: false

@@ -1,0 +1,17 @@
+{
+  "operationsAddedSincePrevious": [
+    "PATCH /pmem/{id}"
+  ],
+  "schemaSurfaceAddedSincePrevious": [
+    "NetworkInterface.mtu",
+    "PartialPmem",
+    "PartialPmem.id",
+    "PartialPmem.rate_limiter",
+    "Pmem.rate_limiter",
+    "SerialDevice.rate_limiter",
+    "SnapshotLoadParams.vsock_override",
+    "VsockOverride",
+    "VsockOverride.uds_path"
+  ],
+  "operationsRemovedSincePrevious": []
+}

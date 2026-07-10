@@ -1,0 +1,48 @@
+# Weekly bot: check for new Firecracker releases and open a PR that bumps the
+# vendored specs + regenerates types when the pinned/previous tags move.
+name: spec-watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Compute latest two Firecracker minors
+        id: latest
+        run: |
+          tags=$(curl -sf https://api.github.com/repos/firecracker-microvm/firecracker/releases?per_page=30 \
+            | jq -r '.[].tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$')
+          pinned=$(echo "$tags" | sort -Vr | head -1)
+          pinned_minor=$(echo "$pinned" | cut -d. -f1-2)
+          previous=$(echo "$tags" | grep -v "^$pinned_minor\." | sort -Vr | head -1)
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+      - name: Refresh specs and regenerate
+        run: |
+          printf '{\n  "pinned": "%s",\n  "previous": "%s"\n}\n' \
+            "${{ steps.latest.outputs.pinned }}" "${{ steps.latest.outputs.previous }}" > spec/versions.json
+          deno task spec:fetch "${{ steps.latest.outputs.pinned }}"
+          deno task spec:fetch "${{ steps.latest.outputs.previous }}"
+          deno task codegen
+      - name: Open PR if anything changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bot/spec-bump
+          title: "spec: track Firecracker ${{ steps.latest.outputs.pinned }}"
+          commit-message: "spec: track Firecracker ${{ steps.latest.outputs.pinned }} (previous ${{ steps.latest.outputs.previous }})"
+          body: |
+            Automated spec refresh. Review `spec/surface-diff.json` for new
+            API surface that needs curated exports and `@since` tags in
+            `src/api/types.ts`, then check that `deno task spec:drift` passes.

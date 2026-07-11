@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 (2026-07-11)
+
+Version-realignment release: identical library content to 0.1.0 (published from
+the same source revision) plus this release metadata. Depend on 0.2.0.
+
+## 0.1.0 (2026-07-11)
 
 Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
 

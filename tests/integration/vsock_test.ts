@@ -7,6 +7,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
+import { envPath } from "./env.ts";
 import {
   listenVsock,
   Machine,

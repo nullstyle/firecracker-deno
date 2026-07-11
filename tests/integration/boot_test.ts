@@ -11,6 +11,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
+import { envPath } from "./env.ts";
 import { ApiError, Machine, type VmConfig } from "../../mod.ts";
 
 const bin = Deno.env.get("FC_TEST_BIN");

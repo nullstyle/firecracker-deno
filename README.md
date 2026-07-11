@@ -122,6 +122,7 @@ deno task test         # unit + fake-backed tiers (no KVM needed, runs on macOS)
 deno task spec:drift   # generated types match the vendored Firecracker spec
 deno run -A tools/fetch-firecracker.ts   # binaries + kernel + rootfs for integration
 deno task test:integration               # real VMs; Linux + /dev/kvm (+ sudo for jailer)
+deno task smoke:lima                     # the same from macOS, inside a nested-virt Lima VM
 ```
 
 Integration tests boot real VMs and are gated behind Linux + `/dev/kvm`; CI runs

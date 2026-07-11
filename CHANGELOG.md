@@ -55,3 +55,6 @@ Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
   supervision without KVM.
 - Verified `deno compile` support with a CI smoke test
   (`tests/smoke/compile_smoke.ts`) on Linux and macOS.
+- `deno task smoke:lima`: one-command real-KVM smoke test on Apple Silicon —
+  provisions a nested-virt Lima VM and runs the full integration suite
+  (including the jailer tier) inside it.

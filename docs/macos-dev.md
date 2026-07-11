@@ -18,22 +18,24 @@ contract (chroot layout, pidfile, exec vs. reparent).
 
 ## Running real VMs locally (Apple Silicon)
 
-Use [Lima](https://lima-vm.io) with nested virtualization (requires an M3 or
-newer and macOS 15+):
+One command, via [Lima](https://lima-vm.io) with nested virtualization (requires
+an M3 or newer, macOS 15+, and `brew install lima`):
 
 ```sh
-limactl start --name=fc --vm-type=vz --nestedVirtualization template://ubuntu-24.04
-limactl shell fc
-# inside the VM:
-sudo apt-get install -y curl unzip squashfs-tools
-curl -fsSL https://deno.land/install.sh | sh
-cd /path/to/firecracker-deno       # your checkout is mounted
-deno run -A tools/fetch-firecracker.ts
-# build the ext4 rootfs from the CI squashfs (see .github/workflows/ci.yml)
-FC_TEST_BIN=tests/assets/firecracker \
-FC_TEST_KERNEL=tests/assets/vmlinux \
-FC_TEST_ROOTFS=tests/assets/rootfs.ext4 \
-deno task test:integration
+deno task smoke:lima
+```
+
+[`tools/lima-smoke.ts`](../tools/lima-smoke.ts) creates (or reuses) an
+`fc-smoke` Ubuntu VM with `/dev/kvm`, provisions Deno and squashfs-tools,
+fetches the aarch64 Firecracker assets, builds the ext4 rootfs, and runs the
+**full integration suite — including the root/jailer tier** — inside the guest.
+The repo is mounted writable at the same path, so assets and the VM are reused:
+the first run downloads an Ubuntu image (a few minutes); re-runs start in
+seconds.
+
+```sh
+deno task smoke:lima --recreate   # rebuild the VM from scratch
+deno task smoke:lima --delete     # tear it down
 ```
 
 On Intel or M1/M2 Macs (no nested virt): push and let CI's KVM job run — that's

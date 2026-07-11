@@ -21,6 +21,7 @@
     "check": "deno fmt --check && deno lint && deno check .",
     "test": "deno test --allow-read --allow-write --allow-net --allow-run --allow-env --allow-sys=uid,gid tests/unit/ tests/fake/",
     "test:integration": "deno test -A tests/integration/",
+    "smoke:lima": "deno run -A tools/lima-smoke.ts",
     "spec:fetch": "deno run --allow-net --allow-write=spec tools/fetch-spec.ts",
     "codegen": "deno run --allow-read --allow-write --allow-net --allow-env tools/codegen.ts",
     "spec:drift": "deno run --allow-read --allow-write --allow-net --allow-env tools/check-spec-drift.ts"

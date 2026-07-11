@@ -9,10 +9,10 @@ import { join } from "@std/path";
 import { envPath } from "./env.ts";
 import { DirRegistry, Machine, type MachineOptions } from "../../mod.ts";
 
-const bin = Deno.env.get("FC_TEST_BIN");
-const jailerBin = Deno.env.get("FC_TEST_JAILER");
-const kernel = Deno.env.get("FC_TEST_KERNEL");
-const rootfs = Deno.env.get("FC_TEST_ROOTFS");
+const bin = envPath("FC_TEST_BIN");
+const jailerBin = envPath("FC_TEST_JAILER");
+const kernel = envPath("FC_TEST_KERNEL");
+const rootfs = envPath("FC_TEST_ROOTFS");
 const kvm = await Deno.stat("/dev/kvm").then(() => true).catch(() => false);
 const isRoot = Deno.build.os === "linux" && Deno.uid() === 0;
 const enabled = Deno.build.os === "linux" && kvm && isRoot &&

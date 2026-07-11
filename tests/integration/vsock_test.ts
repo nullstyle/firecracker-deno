@@ -15,9 +15,9 @@ import {
   VsockDialError,
 } from "../../mod.ts";
 
-const bin = Deno.env.get("FC_TEST_BIN");
-const kernel = Deno.env.get("FC_TEST_KERNEL");
-const rootfs = Deno.env.get("FC_TEST_ROOTFS");
+const bin = envPath("FC_TEST_BIN");
+const kernel = envPath("FC_TEST_KERNEL");
+const rootfs = envPath("FC_TEST_ROOTFS");
 const kvm = await Deno.stat("/dev/kvm").then(() => true).catch(() => false);
 const enabled = Deno.build.os === "linux" && kvm &&
   bin !== undefined && kernel !== undefined && rootfs !== undefined;

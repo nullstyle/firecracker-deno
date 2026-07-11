@@ -40,7 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-latest]
-        deno: ["v2.4.x", "v2.x"]
+        deno: ["v2.5.x", "v2.x"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

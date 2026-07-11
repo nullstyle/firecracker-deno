@@ -129,8 +129,10 @@ Deno.test("payload pipelined behind OK is never swallowed", async () => {
   const dir = await Deno.makeTempDir();
   const path = join(dir, "pipelined.sock");
   const listener = Deno.listen({ transport: "unix", path });
+  const served: Deno.Conn[] = [];
   const serving = (async () => {
     for await (const conn of listener) {
+      served.push(conn);
       // OK line and payload in a single write.
       await writeAll(conn, encoder.encode("OK 77\nworld"));
     }
@@ -141,6 +143,13 @@ Deno.test("payload pipelined behind OK is never swallowed", async () => {
     assertEquals(await readN(conn, 5), "world");
   } finally {
     listener.close();
+    for (const conn of served) {
+      try {
+        conn.close();
+      } catch {
+        // peer already closed it
+      }
+    }
     await serving.catch(() => {});
     await Deno.remove(dir, { recursive: true });
   }

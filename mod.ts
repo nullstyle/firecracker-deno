@@ -11,7 +11,7 @@
  * It is the low-level foundation for building secure local sandboxes,
  * microVM runners, and higher-level platforms.
  *
- * Firecracker runs on Linux hosts with KVM; this library requires Deno 2.4+
+ * Firecracker runs on Linux hosts with KVM; this library requires Deno 2.5+
  * and Firecracker within the window described by {@linkcode FIRECRACKER_COMPAT}.
  *
  * @example Boot a microVM, talk to it over vsock, clean up on scope exit

@@ -17,6 +17,11 @@ Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
   it itself, and the duplicate was fatal
   (`ParseArguments(DuplicateArgument("id"))`). The fake jailer/VMM now mirror
   this contract so the class is caught without KVM.
+- Deno floor raised to **2.5**: 2.4 gated the Unix-socket `fetch` proxy behind
+  `--allow-all`, and its `Deno.kill(pid, 0)` rejected the liveness probe
+  (hanging pidfile-authority exit detection). `pidAlive` now feature-detects and
+  falls back to a `SIGCONT` probe on runtimes without signal-0 support (2.5
+  included).
 
 - **Typed API client** (`./client`): one method per endpoint of the pinned spec
   (38 operations), HTTP over the Unix API socket via native `fetch`,

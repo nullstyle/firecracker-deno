@@ -101,7 +101,8 @@ The `Machine` layer maintains these invariants:
 - **Runtime**: Linux with KVM (`/dev/kvm`) to actually run VMs. The client,
   vsock protocol code, and `FakeFirecracker` work on any Deno platform — develop
   and unit-test on macOS, run on Linux.
-- **Deno** ≥ 2.4 (native HTTP-over-Unix-socket `fetch`).
+- **Deno** ≥ 2.5 (native HTTP-over-Unix-socket `fetch` usable with scoped
+  permissions; 2.4 gated it behind `--allow-all`).
 - **Firecracker** within the supported window (see `FIRECRACKER_COMPAT`): pinned
   against v1.16.x, minimum v1.15.0. Jailed mode requires root.
 

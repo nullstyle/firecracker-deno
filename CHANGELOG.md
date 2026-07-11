@@ -13,6 +13,10 @@ Initial release. Pinned to Firecracker v1.16.1 (minimum v1.15.0).
 - `JailRecord.metadata` + `metadata` option on machine/restore options: opaque
   caller labels (lease ids, group names) recorded verbatim for downstream
   supervisors.
+- Jailed machines no longer forward `--id` to Firecracker — the jailer injects
+  it itself, and the duplicate was fatal
+  (`ParseArguments(DuplicateArgument("id"))`). The fake jailer/VMM now mirror
+  this contract so the class is caught without KVM.
 
 - **Typed API client** (`./client`): one method per endpoint of the pinned spec
   (38 operations), HTTP over the Unix API socket via native `fetch`,

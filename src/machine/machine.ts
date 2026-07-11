@@ -579,11 +579,12 @@ export class Machine implements AsyncDisposable {
     try {
       jailerProc = VmmProcess.spawn({
         command: jailer.jailerBin,
+        // No --id here: the jailer injects `--id <jail id>` into
+        // Firecracker's argv itself; passing it again is
+        // ParseArguments(DuplicateArgument("id")).
         args: buildJailerArgv(jailer, [
           "--api-sock",
           socketJailPath,
-          "--id",
-          vmId,
           ...(spec.extraArgs ?? []),
         ]),
       });

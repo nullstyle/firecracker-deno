@@ -16,6 +16,20 @@
 
 import { FakeFirecracker } from "./mod.ts";
 
+// Mirror real Firecracker's argv strictness: repeated flags are fatal.
+// (The jailer injects --id itself; a supervisor that also forwards --id
+// gets exactly this error from the real binary — exit code 153.)
+for (const flag of ["--id", "--api-sock"]) {
+  if (Deno.args.filter((arg) => arg === flag).length > 1) {
+    console.error(
+      `Error: ParseArguments(DuplicateArgument(${
+        JSON.stringify(flag.replace(/^--/, ""))
+      }))`,
+    );
+    Deno.exit(153);
+  }
+}
+
 const sockIdx = Deno.args.indexOf("--api-sock");
 const socketPath = sockIdx === -1 ? undefined : Deno.args[sockIdx + 1];
 const mode = Deno.env.get("FAKE_VMM_MODE") ?? "ready";

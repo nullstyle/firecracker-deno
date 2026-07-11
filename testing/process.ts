@@ -154,12 +154,12 @@ while [ $i -lt $n ]; do
 done
 PIDFILE="$ROOT/$(basename "$EXEC").pid"
 if [ "$REPARENT" = 1 ]; then
-  "$EXEC" "$@" >/dev/null 2>&1 &
+  "$EXEC" --id "$ID" "$@" >/dev/null 2>&1 &
   echo $! > "$PIDFILE"
   exit 0
 else
   echo $$ > "$PIDFILE"
-  exec "$EXEC" "$@"
+  exec "$EXEC" --id "$ID" "$@"
 fi
 `,
   );

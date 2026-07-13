@@ -82,6 +82,23 @@ await using vm = await Machine.launch({
 // vm.state === "running" — spawn, readiness, and shutdown paths all real
 ```
 
+## Testing your supervisor's crash recovery
+
+To test that your supervisor `recover()`s correctly (see
+[Adoption](adoption.md)), reproduce a real orphaning: launch a journaled machine
+in a **subprocess**, SIGKILL that subprocess, and adopt from the registry in
+your test. The fake VMM survives its supervisor's death exactly like real
+Firecracker does — its API socket and vsock mux stay live.
+
+The subprocess is ~20 lines (this repo's `tests/fake/crash_supervisor.ts` is the
+reference): create a `DirRegistry`, `Machine.launch` against
+`makeFakeVmmBin(dir, "ready")`, print `LAUNCHED ${vm.pid}`, and hang. The test
+spawns it with `stdout: "piped"`, parses the pid, kills the supervisor with
+SIGKILL, and then exercises your recovery path — `Machine.adopt` / `recover()` —
+asserting live API and vsock traffic against the surviving socket. This repo's
+`tests/fake/adopt_test.ts` shows the full pattern, including paused,
+never-booted, and stale-listener scenarios.
+
 ## Trust, but verify
 
 The fake's fidelity is enforced in this repo by contract-symmetry integration

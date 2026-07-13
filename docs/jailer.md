@@ -53,12 +53,18 @@ modes the library polls for that file (racing jailer failure) and then watches
 the pid with signal-0 liveness. `VmmExit.observedVia` tells you which authority
 produced any given exit.
 
+Machines re-attached after a supervisor crash (`Machine.adopt`, see
+[Adoption](adoption.md)) are always `pidfile-poll`, regardless of the mode they
+were originally launched in — the process is no longer our child.
+
 ## Hardening notes
 
 - The chroot base and exec directories are created `0700`; a **pre-existing**
-  `<base>/<exec>/<id>` is refused, never adopted (upstream jailer symlink-attack
+  `<base>/<exec>/<id>` is refused, never reused (upstream jailer symlink-attack
   class, fixed in v1.13.2/v1.14.1 — this library also enforces
-  `FIRECRACKER_COMPAT.min` ≥ v1.15).
+  `FIRECRACKER_COMPAT.min` ≥ v1.15). This is about launching a _new_ jail into
+  leftover directories — distinct from `Machine.adopt`, which re-attaches to a
+  _still-running_ VMM through its registry record (see [Adoption](adoption.md)).
 - The library never creates or destroys network namespaces; `netnsPath` joins an
   existing one.
 - Cgroup: the library defaults `--cgroup-version 2` (the jailer's own default is

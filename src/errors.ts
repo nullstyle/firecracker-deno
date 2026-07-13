@@ -29,6 +29,7 @@
  */
 
 import type {
+  AdoptFailureReason,
   ShutdownStage,
   VmmExit,
   VmState,
@@ -273,6 +274,33 @@ export class InvalidStateError extends FirecrackerError {
     this.name = "InvalidStateError";
     this.state = opts.state;
     this.operation = opts.operation;
+  }
+}
+
+/**
+ * `Machine.adopt` refused (or failed) to re-attach to a record's VMM. The
+ * {@linkcode AdoptError.reason} says why — see
+ * {@linkcode AdoptFailureReason} for the full taxonomy. A refusal leaves
+ * the process and its record exactly as they were found.
+ */
+export class AdoptError extends FirecrackerError {
+  /** Stable machine-readable code identifying this error class. */
+  override readonly code: "FC_ADOPT" = "FC_ADOPT";
+  /** The vmId of the record that could not be adopted. */
+  readonly vmId: string;
+  /** Why adoption was refused. */
+  readonly reason: AdoptFailureReason;
+
+  /** Constructs the error; the message is derived from the fields. */
+  constructor(
+    opts: { vmId: string; reason: AdoptFailureReason; cause?: unknown },
+  ) {
+    super(`cannot adopt "${opts.vmId}": ${opts.reason}`, {
+      cause: opts.cause,
+    });
+    this.name = "AdoptError";
+    this.vmId = opts.vmId;
+    this.reason = opts.reason;
   }
 }
 

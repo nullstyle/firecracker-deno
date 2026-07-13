@@ -89,18 +89,55 @@ export function pidMatchesVmmSync(pid: number, tokens: string[]): boolean {
 }
 
 /**
+ * Strict identity probe for adoption. Unlike {@linkcode pidMatchesVmm},
+ * an unreadable cmdline is reported as `"unverifiable"` rather than
+ * treated as a match: before handing out a kill-capable handle to a pid
+ * we did not spawn, identity must be *positively* established, not merely
+ * not-disproven. `"unverifiable"` covers non-Linux (no `/proc`), hidepid
+ * mounts, permission mismatches — and pids that died mid-probe.
+ */
+export async function pidIdentity(
+  pid: number,
+  tokens: string[],
+): Promise<"match" | "mismatch" | "unverifiable"> {
+  const cmdline = await readCmdline(pid);
+  if (cmdline === null) return "unverifiable";
+  return matches(cmdline, tokens) ? "match" : "mismatch";
+}
+
+/**
+ * The process start time from `/proc/<pid>/stat` (field 22), as an opaque
+ * token compared only for equality: same pid + different start time means
+ * the pid was recycled by a different process. Null when unreadable
+ * (non-Linux, process gone, no access).
+ */
+export async function readPidStartTime(pid: number): Promise<string | null> {
+  try {
+    const stat = await Deno.readTextFile(`/proc/${pid}/stat`);
+    // comm (field 2) may contain spaces and parens; fields 3+ follow the
+    // *last* ")", so starttime (field 22 overall) is index 19 after it.
+    const token = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/)[19];
+    return token === undefined || token === "" ? null : token;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Linux best-effort orphan finder: scan `/proc` for a live process (other
- * than ourselves) whose cmdline mentions one of `tokens`. Returns null
- * when nothing matches or `/proc` is unavailable (non-Linux).
+ * than ourselves, and not in `exclude`) whose cmdline mentions one of
+ * `tokens`. Returns null when nothing matches or `/proc` is unavailable
+ * (non-Linux).
  */
 export async function findVmmPidByCmdline(
   tokens: string[],
+  exclude: ReadonlySet<number> = new Set(),
 ): Promise<number | null> {
   try {
     for await (const entry of Deno.readDir("/proc")) {
       if (!/^\d+$/.test(entry.name)) continue;
       const pid = Number(entry.name);
-      if (pid === Deno.pid) continue;
+      if (pid === Deno.pid || exclude.has(pid)) continue;
       const cmdline = await readCmdline(pid);
       if (cmdline !== null && matches(cmdline, tokens)) return pid;
     }

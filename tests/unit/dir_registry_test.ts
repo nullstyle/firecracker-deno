@@ -77,6 +77,77 @@ Deno.test("list on a registry dir that does not exist yet is empty", async () =>
   });
 });
 
+Deno.test("adoption fields round-trip and survive unrelated updates", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "reg"));
+    await registry.put(record("vm-adopt", {
+      pid: 42,
+      cgroupPath: "/sys/fs/cgroup/firecracker/vm-adopt",
+      pidStartTime: "12345678",
+      adoptedAt: "2026-07-12T00:00:00.000Z",
+      supervisorPid: 999,
+    }));
+    const [rec] = await registry.list();
+    assertEquals(rec.cgroupPath, "/sys/fs/cgroup/firecracker/vm-adopt");
+    assertEquals(rec.pidStartTime, "12345678");
+    assertEquals(rec.adoptedAt, "2026-07-12T00:00:00.000Z");
+    assertEquals(rec.supervisorPid, 999);
+
+    // A patch that doesn't mention the adoption fields must not lose them.
+    await registry.update("vm-adopt", { pid: 43 });
+    const [after] = await registry.list();
+    assertEquals(after.pid, 43);
+    assertEquals(after.cgroupPath, "/sys/fs/cgroup/firecracker/vm-adopt");
+    assertEquals(after.pidStartTime, "12345678");
+  });
+});
+
+Deno.test("records without adoption fields (0.2.0-shaped) still parse", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "reg"));
+    // Byte-for-byte the shape 0.2.0 wrote: none of the new optional fields.
+    await Deno.mkdir(join(dir, "reg"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "reg", "old-vm.json"),
+      JSON.stringify({
+        version: 1,
+        vmId: "old-vm",
+        pid: 42,
+        apiSocketPath: "/tmp/old-vm/fc.sock",
+        stateDir: "/tmp/old-vm",
+        ownsStateDir: false,
+        vsockListenerPaths: [],
+        createdAt: "2026-07-10T00:00:00.000Z",
+      }),
+    );
+    const [rec] = await registry.list();
+    assertEquals(rec.vmId, "old-vm");
+    assertEquals(rec.cgroupPath, undefined);
+    assertEquals(rec.pidStartTime, undefined);
+    assertEquals(rec.adoptedAt, undefined);
+  });
+});
+
+Deno.test("unknown extra fields are preserved across update (forward compat)", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "reg"));
+    await Deno.mkdir(join(dir, "reg"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "reg", "future-vm.json"),
+      JSON.stringify({
+        ...record("future-vm"),
+        fieldFromTheFuture: "keep me",
+      }),
+    );
+    await registry.update("future-vm", { pid: 7 });
+    const raw = JSON.parse(
+      await Deno.readTextFile(join(dir, "reg", "future-vm.json")),
+    );
+    assertEquals(raw.pid, 7);
+    assertEquals(raw.fieldFromTheFuture, "keep me");
+  });
+});
+
 Deno.test("hostile vmIds are rejected before touching the filesystem", async () => {
   await withDir(async (dir) => {
     const registry = new DirRegistry(join(dir, "reg"));

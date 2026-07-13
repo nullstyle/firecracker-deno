@@ -34,8 +34,25 @@ export interface JailRecord {
   pidfilePath?: string;
   /** Chroot directory of a jailed machine (removed on reclaim). */
   chrootDir?: string;
+  /**
+   * Resolved cgroup-v2 directory the jailer created for this machine
+   * (`/sys/fs/cgroup/<parent ?? execName>/<id>`), when cgroups are in use.
+   * The jailer never removes it — reclaim and disposal do, via this path.
+   */
+  cgroupPath?: string;
+  /**
+   * Opaque `/proc/<pid>/stat` start-time token captured when `pid` was
+   * journaled. Compared for equality only: a live process with the same
+   * pid but a different start time is a recycled pid, not this VMM.
+   * Absent on runtimes without `/proc`.
+   */
+  pidStartTime?: string;
   /** ISO 8601 creation time. */
   createdAt: string;
+  /** ISO 8601 time of the most recent adoption (`Machine.adopt`), if any. */
+  adoptedAt?: string;
+  /** Pid of the supervisor that adopted this record (diagnostic, not a lease). */
+  supervisorPid?: number;
   /**
    * Opaque caller labels (lease ids, group names, tenant tags, …).
    * Recorded verbatim and never interpreted by this library — downstream

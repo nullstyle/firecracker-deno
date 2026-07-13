@@ -37,9 +37,10 @@ export type VmState =
  *
  * - `"child-status"` — the Firecracker process was a direct child and its
  *   exit status came from the process table (reliable exit code + signal).
- * - `"pidfile-poll"` — the VMM was reparented (jailer `--daemonize` or
- *   `--new-pid-ns`), so death was detected by polling the PID from the
- *   jailer-written pidfile. Exit codes are unobservable in this mode.
+ * - `"pidfile-poll"` — the VMM is not our child: it was reparented (jailer
+ *   `--daemonize` or `--new-pid-ns`) or adopted after a supervisor restart
+ *   (`Machine.adopt`), so death was detected by pid liveness polling. Exit
+ *   codes are unobservable in this mode.
  */
 export type ExitObservation = "child-status" | "pidfile-poll";
 
@@ -119,3 +120,37 @@ export type VsockDialFailureReason =
   | "closed-before-ok"
   | "malformed-ack"
   | "timeout";
+
+/**
+ * Why `Machine.adopt` refused a record. Refusals never kill the process
+ * or touch files — the record is left for `reconcile()` (or an explicit
+ * `recover({ onUnadoptable: "kill" })`) to deal with.
+ *
+ * - `"vmm-not-found"` — no live process matches the record: the VMM is
+ *   dead, or its pid was recycled by an unrelated process (reclaim the
+ *   record via `reconcile()`).
+ * - `"identity-unverifiable"` — the process's identity could not be read
+ *   (`/proc` access denied). Refused on Linux; on runtimes without
+ *   `/proc` adoption proceeds on pid liveness alone.
+ * - `"not-started"` — the instance never booted. Its configuration is not
+ *   persisted, so a pre-boot machine's invariants cannot be re-established.
+ * - `"api-unreachable"` — the process is alive but its API socket did not
+ *   answer within the deadline.
+ * - `"api-mismatch"` — something answered on the API socket, but not this
+ *   record's Firecracker (wrong instance id, or not Firecracker at all).
+ * - `"already-adopted"` — this process already holds a live `Machine`
+ *   (launched or adopted) for the record's vmId.
+ * - `"corrupt-record"` — the record's fields are internally inconsistent
+ *   (e.g. a jailed record whose paths don't agree with its vmId).
+ * - `"conflict"` — the record vanished mid-adoption (a concurrent sweep
+ *   removed it).
+ */
+export type AdoptFailureReason =
+  | "vmm-not-found"
+  | "identity-unverifiable"
+  | "not-started"
+  | "api-unreachable"
+  | "api-mismatch"
+  | "already-adopted"
+  | "corrupt-record"
+  | "conflict";

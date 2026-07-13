@@ -6,9 +6,13 @@
  * @module
  */
 
-import { isAbsolute, join, resolve } from "@std/path";
+import { basename, dirname, isAbsolute, join, resolve } from "@std/path";
 import { FirecrackerClient } from "../api/client.ts";
-import type { SnapshotCreateParams, SnapshotLoadParams } from "../api/types.ts";
+import type {
+  InstanceInfo,
+  SnapshotCreateParams,
+  SnapshotLoadParams,
+} from "../api/types.ts";
 import {
   cleanupError,
   type CleanupStep,
@@ -16,6 +20,7 @@ import {
   runCleanupSteps,
 } from "../cleanup.ts";
 import {
+  AdoptError,
   type CleanupFailure,
   JailerConfigError,
   ProcessExitedError,
@@ -37,7 +42,9 @@ import {
   findVmmPidByCmdline,
   idCmdlineToken,
   pidAlive,
+  readPidStartTime,
 } from "../internal/liveness.ts";
+import { findLiveVmm } from "../internal/records.ts";
 import { stageChroot } from "../jailer/stage.ts";
 import {
   ReparentedVmm,
@@ -46,7 +53,7 @@ import {
 } from "../process/pidfile.ts";
 import { escalatingShutdown } from "../process/shutdown.ts";
 import { type VmmHandle, VmmProcess } from "../process/supervisor.ts";
-import type { VmRegistry } from "../registry/registry.ts";
+import type { JailRecord, VmRegistry } from "../registry/registry.ts";
 import type { ShutdownOptions, VmmExit, VmState } from "../types.ts";
 import type { VsockConn } from "../vsock/conn.ts";
 import { connectVsock, type VsockDialOptions } from "../vsock/dial.ts";
@@ -73,6 +80,19 @@ export interface CommonMachineOptions {
   shutdown?: ShutdownOptions;
   /** Extra argv appended to the Firecracker command line. */
   extraArgs?: string[];
+  /**
+   * What to do with the VMM's stdout/stderr: `"capture"` (default) pipes
+   * them into {@linkcode Machine.consoleTail} and `VmmExit.stderrTail`;
+   * `"null"` discards them at spawn time.
+   *
+   * Use `"null"` for machines that must survive a supervisor crash and be
+   * re-attached with `Machine.adopt`: a captured pipe whose reader died
+   * with the supervisor wedges Firecracker on its next write — the VMM
+   * freezes and stops answering its API. Irrelevant under jailer
+   * `--daemonize` (stdio already goes to `/dev/null`). See
+   * docs/adoption.md.
+   */
+  stdio?: "capture" | "null";
   /**
    * Opaque labels recorded on the machine's JailRecord (requires a
    * registry): lease ids, group names, tenant tags. Never interpreted.
@@ -154,6 +174,8 @@ export interface CommonRestoreOptions {
   shutdown?: ShutdownOptions;
   /** Extra argv appended to the Firecracker command line. */
   extraArgs?: string[];
+  /** See {@linkcode CommonMachineOptions.stdio}. */
+  stdio?: "capture" | "null";
   /**
    * Opaque labels recorded on the machine's JailRecord (requires a
    * registry): lease ids, group names, tenant tags. Never interpreted.
@@ -194,11 +216,39 @@ export interface JailedRestoreOptions extends CommonRestoreOptions {
 /** Options for {@linkcode Machine.restore}. */
 export type RestoreOptions = DirectRestoreOptions | JailedRestoreOptions;
 
+/** Options for {@linkcode Machine.adopt}. */
+export interface AdoptOptions {
+  /**
+   * The record to adopt, exactly as returned by `registry.list()`.
+   * Adoption never spawns anything — it re-attaches to the still-running
+   * VMM this record journals.
+   */
+  record: JailRecord;
+  /**
+   * The registry the record lives in. The adopted machine keeps updating
+   * it (listener journaling) and removes the record when disposal fully
+   * reclaims — exactly like a machine this process launched itself.
+   */
+  registry: VmRegistry;
+  /**
+   * Deadline for the (already-live) API socket to answer `GET /`. Kept
+   * short by default: an adoptable socket answers immediately, and a
+   * sweep over many unadoptable records should not stall on each one.
+   * @default 2_000
+   */
+  readinessTimeoutMs?: number;
+  /** Default deadlines for {@linkcode Machine.shutdown}. */
+  shutdown?: ShutdownOptions;
+  /** Aborts `adopt()` while it probes. */
+  signal?: AbortSignal;
+}
+
 /** Cross-cutting settings a machine keeps for its whole life. */
 interface MachineSettings {
   shutdown?: ShutdownOptions;
   registry?: VmRegistry;
-  jailer?: JailerOptions;
+  /** Resolved cgroup-v2 dir to remove at disposal (jailed machines). */
+  cgroupPath?: string;
 }
 
 /** Internal: what a direct spawn needs (config-independent). */
@@ -210,6 +260,7 @@ interface DirectSpawnSpec {
   extraArgs?: string[];
   registry?: VmRegistry;
   shutdown?: ShutdownOptions;
+  stdio?: "capture" | "null";
   metadata?: Record<string, string>;
   /** vsock uds path as the VMM sees it (resolved against the state dir). */
   vsockPath?: string;
@@ -222,6 +273,7 @@ interface JailedSpawnSpec {
   extraArgs?: string[];
   registry: VmRegistry | undefined;
   shutdown?: ShutdownOptions;
+  stdio?: "capture" | "null";
   readinessTimeoutMs?: number;
   signal?: AbortSignal;
   metadata?: Record<string, string>;
@@ -335,7 +387,9 @@ export class Machine implements AsyncDisposable {
     this.#jail = init.jail;
     this.#stagedPaths = init.stagedPaths;
     this.exited = init.vmm.exited;
+    liveVmIds.add(init.vmId);
     void init.vmm.exited.then((exit) => {
+      liveVmIds.delete(init.vmId);
       this.#lifecycle.transition("exited", exit);
       this.#exitAborter.abort(
         new ProcessExitedError({ exit, operation: "use the machine" }),
@@ -402,6 +456,207 @@ export class Machine implements AsyncDisposable {
     return machine;
   }
 
+  /**
+   * Re-attach to a still-running VMM that a previous — now dead —
+   * supervisor launched, reconstructing a live `Machine` from its
+   * {@linkcode JailRecord}. Nothing is spawned; the record's pid is
+   * re-verified (cmdline identity plus start-time, where `/proc` allows),
+   * the API socket is probed, and the machine lands directly in
+   * `"running"` or `"paused"`. This is the alternative to
+   * `reconcile({ killLive: true })` for supervisors whose VMs must
+   * survive a supervisor crash — see `recover()` for the sweep that
+   * combines both.
+   *
+   * A refusal (thrown {@linkcode AdoptError}) never kills the process and
+   * never touches files or the record: whatever could not be adopted is
+   * left exactly as found, for `reconcile()` or an explicit kill to deal
+   * with. The one exception is a VMM that dies *mid-adoption*: that is
+   * reclaimed like any other death and surfaces as `ProcessExitedError`.
+   *
+   * What an adopted machine loses (the process is no longer our child):
+   * - `exited` reports `observedVia: "pidfile-poll"` with `code`/`signal`
+   *   `null` — exit codes are unobservable.
+   * - {@linkcode consoleTail} and `VmmExit.stderrTail` are empty; use the
+   *   Firecracker `logger`/`serial` devices.
+   * - {@linkcode jailPath} loses the staged-file map (chroot-prefix
+   *   stripping still works) — pass in-jail paths to post-adoption calls.
+   * - cgroup cleanup at disposal only for records journaled with
+   *   `cgroupPath` (written by this version onward).
+   *
+   * Everything else — the API client, vsock, escalating shutdown with the
+   * pid-reuse guard, disposal-with-reclaim — behaves exactly as if this
+   * process had launched the machine. Precondition: one live supervisor
+   * per registry directory; adoption is not a lease protocol.
+   *
+   * (Unrelated to the jailer's "a pre-existing jail root is refused,
+   * never adopted" hardening, which is about *reusing stale chroot
+   * directories at spawn time* — see docs/jailer.md.)
+   *
+   * @example Re-attaching after a supervisor restart
+   * ```ts
+   * import { DirRegistry, Machine } from "@nullstyle/firecracker";
+   *
+   * const registry = new DirRegistry("/var/lib/sandbox-host/state");
+   * for (const record of await registry.list()) {
+   *   const vm = await Machine.adopt({ record, registry });
+   *   console.log(`adopted ${vm.vmId} (pid ${vm.pid}): ${vm.state}`);
+   * }
+   * ```
+   */
+  static async adopt(options: AdoptOptions): Promise<Machine> {
+    options.signal?.throwIfAborted();
+    const vmId = options.record.vmId;
+    // Refuse while ANY live Machine in this process — launched or adopted
+    // — holds this vmId: a second kill-capable handle on the same VMM
+    // would mean two shutdown sequencers and racing file cleanup (and
+    // adoption would unlink the live machine's listener sockets).
+    if (liveVmIds.has(vmId)) {
+      throw new AdoptError({ vmId, reason: "already-adopted" });
+    }
+    liveVmIds.add(vmId);
+    try {
+      // The constructor re-adds the vmId; it clears when exit is observed.
+      return await Machine.#adopt(options);
+    } catch (err) {
+      liveVmIds.delete(vmId);
+      throw err;
+    }
+  }
+
+  static async #adopt(options: AdoptOptions): Promise<Machine> {
+    const { record, registry, signal } = options;
+    const vmId = record.vmId;
+
+    // 1. Locate the live VMM and positively establish its identity —
+    //    before anything kill-capable exists.
+    const live = await findLiveVmm(record);
+    if (live === null) {
+      throw new AdoptError({ vmId, reason: "vmm-not-found" });
+    }
+    if (live.identity === "unverifiable" && Deno.build.os === "linux") {
+      // /proc exists here but this pid's cmdline was unreadable (hidepid,
+      // permissions): identity must be proven, not merely not-disproven.
+      throw new AdoptError({ vmId, reason: "identity-unverifiable" });
+    }
+
+    // 2. Pure record math next: rebuild the jail layout (jailed records).
+    const jail = record.chrootDir === undefined
+      ? null
+      : jailPathsFromRecord(record);
+
+    // 3. Probe the API socket. Unlike create(), this is not raced against
+    //    process death (no handle exists yet); a mid-probe death simply
+    //    exhausts the short budget and reads as unreachable.
+    const client = new FirecrackerClient({
+      socketPath: record.apiSocketPath,
+    });
+    let info: InstanceInfo;
+    try {
+      info = await client.waitReady({
+        timeoutMs: options.readinessTimeoutMs ?? 2_000,
+        signal,
+      });
+    } catch (cause) {
+      client.close();
+      // A caller abort is not an adoption verdict: wrapping it as
+      // "api-unreachable" would let a cancelled recover({onUnadoptable:
+      // "kill"}) sweep destroy a healthy, adoptable VM.
+      if (signal?.aborted) throw signal.reason;
+      throw new AdoptError({ vmId, reason: "api-unreachable", cause });
+    }
+    try {
+      // Whatever answered must be this record's Firecracker: a foreign
+      // process bound to a stale socket path must not be adopted. The id
+      // must be present AND match — real Firecracker always reports its
+      // --id, so an answer without one is not this VM either.
+      const stateOk = info.state === "Not started" ||
+        info.state === "Running" || info.state === "Paused";
+      if (!stateOk || info.id !== vmId) {
+        throw new AdoptError({ vmId, reason: "api-mismatch" });
+      }
+      if (info.state === "Not started") {
+        // VmConfig is not persisted: a crashed-mid-create() machine's
+        // "fully configured" invariant is unknowable. Not adoptable.
+        throw new AdoptError({ vmId, reason: "not-started" });
+      }
+
+      // 4. Unlink stale guest-listener sockets — their fds died with the
+      //    old supervisor, and a re-listen would hit AddrInUse. (Unlink
+      //    before clearing them from the record: a crash in between
+      //    leaves paths that reclaim tolerates as already-gone, never
+      //    files no record names.)
+      for (const path of record.vsockListenerPaths) {
+        await Deno.remove(path).catch(() => {});
+      }
+
+      // 5. Journal the adoption before any handle exists: refreshed pid,
+      //    start-time, and diagnostics. A vanished record means a
+      //    concurrent sweep owns this vmId — abort.
+      const pidStartTime = await readPidStartTime(live.pid);
+      try {
+        await registry.update(vmId, {
+          pid: live.pid,
+          ...(pidStartTime !== null ? { pidStartTime } : {}),
+          vsockListenerPaths: [],
+          adoptedAt: new Date().toISOString(),
+          supervisorPid: Deno.pid,
+        });
+      } catch (cause) {
+        throw new AdoptError({ vmId, reason: "conflict", cause });
+      }
+    } catch (err) {
+      client.close();
+      throw err;
+    }
+
+    // 6. Only now, with every refusal behind us, construct the handle —
+    //    ReparentedVmm's liveness poll starts immediately and cannot be
+    //    cancelled, so it must not exist on any refusal path.
+    const vmm = new ReparentedVmm(live.pid, {
+      jailerStderr: () => "",
+      identityToken: idCmdlineToken(vmId),
+    });
+    const machine = new Machine({
+      vmm,
+      client,
+      settings: {
+        shutdown: options.shutdown,
+        registry,
+        ...(record.cgroupPath !== undefined
+          ? { cgroupPath: record.cgroupPath }
+          : {}),
+      },
+      paths: {
+        apiSocket: record.apiSocketPath,
+        stateDir: record.stateDir,
+        ...(jail !== null ? { chrootRoot: jail.chrootRoot } : {}),
+        ...(record.vsockUdsPath !== undefined
+          ? { vsockUds: record.vsockUdsPath }
+          : {}),
+      },
+      ownsStateDir: record.ownsStateDir,
+      vmId,
+      jail,
+      stagedPaths: new Map(),
+    });
+
+    // 7. Walk the lifecycle to the probed state (the restore() precedent).
+    machine.#lifecycle.transition("starting");
+    machine.#lifecycle.transition(
+      info.state === "Paused" ? "paused" : "running",
+    );
+    // Died between the probe and here? Reclaim like any failed create —
+    // "died during adoption" must equal "was dead", so a sweep needs no
+    // second pass. (transition() ignores illegal edges silently, so the
+    // walk above cannot be trusted to fail loudly — check the exit.)
+    const exit = machine.#vmm.exit;
+    if (exit !== null) {
+      await machine.#destroyAfterFailedCreate();
+      throw new ProcessExitedError({ exit, operation: "adopt" });
+    }
+    return machine;
+  }
+
   static async #spawn(
     options: MachineOptions | RestoreOptions,
     vsockPath: string | undefined,
@@ -413,6 +668,7 @@ export class Machine implements AsyncDisposable {
         extraArgs: options.extraArgs,
         registry: options.registry,
         shutdown: options.shutdown,
+        stdio: options.stdio,
         metadata: options.metadata,
         readinessTimeoutMs: options.readinessTimeoutMs,
         signal: options.signal,
@@ -427,6 +683,7 @@ export class Machine implements AsyncDisposable {
       extraArgs: options.extraArgs,
       registry: options.registry,
       shutdown: options.shutdown,
+      stdio: options.stdio,
       metadata: options.metadata,
       vsockPath,
     });
@@ -485,6 +742,7 @@ export class Machine implements AsyncDisposable {
           ...(spec.extraArgs ?? []),
         ],
         cwd: stateDir,
+        stdio: spec.stdio,
       });
     } catch (err) {
       // Nothing is running (validation, journaling, or the spawn itself
@@ -499,7 +757,11 @@ export class Machine implements AsyncDisposable {
     if (spec.registry !== undefined) {
       // Best-effort: a record with pid null still reconciles via its files
       // and reconcile()'s cmdline scan.
-      await spec.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
+      const pidStartTime = await readPidStartTime(vmm.pid);
+      await spec.registry.update(vmId, {
+        pid: vmm.pid,
+        ...(pidStartTime !== null ? { pidStartTime } : {}),
+      }).catch(() => {});
     }
     return new Machine({
       vmm,
@@ -557,6 +819,7 @@ export class Machine implements AsyncDisposable {
 
     // Journal-before-spawn (before staging, even: a crash mid-staging must
     // leave a reclaimable record for the half-built chroot).
+    const cgroupPath = cgroupV2Path(jailer, jail);
     await spec.registry.put({
       version: 1,
       vmId,
@@ -566,6 +829,7 @@ export class Machine implements AsyncDisposable {
       ownsStateDir: false,
       chrootDir: jail.jailRoot,
       pidfilePath: jail.pidfileHost,
+      ...(cgroupPath !== undefined ? { cgroupPath } : {}),
       ...(paths.vsockUds !== undefined ? { vsockUdsPath: paths.vsockUds } : {}),
       vsockListenerPaths: [],
       createdAt: new Date().toISOString(),
@@ -587,6 +851,7 @@ export class Machine implements AsyncDisposable {
           socketJailPath,
           ...(spec.extraArgs ?? []),
         ]),
+        stdio: spec.stdio,
       });
     } catch (err) {
       // The jailer never started: unwind the staged chroot and the record.
@@ -648,7 +913,11 @@ export class Machine implements AsyncDisposable {
       }
       throw err;
     }
-    await spec.registry.update(vmId, { pid: vmm.pid }).catch(() => {});
+    const pidStartTime = await readPidStartTime(vmm.pid);
+    await spec.registry.update(vmId, {
+      pid: vmm.pid,
+      ...(pidStartTime !== null ? { pidStartTime } : {}),
+    }).catch(() => {});
 
     return new Machine({
       vmm,
@@ -656,7 +925,7 @@ export class Machine implements AsyncDisposable {
       settings: {
         shutdown: spec.shutdown,
         registry: spec.registry,
-        jailer,
+        ...(cgroupPath !== undefined ? { cgroupPath } : {}),
       },
       paths,
       ownsStateDir: false,
@@ -964,14 +1233,8 @@ export class Machine implements AsyncDisposable {
 
   /** Best-effort cgroup-v2 subtree removal (jailer creates, never removes). */
   #cgroupCleanupStep(): CleanupStep | null {
-    const jailer = this.#settings.jailer;
-    if (jailer === undefined || this.#jail === null) return null;
-    const usesCgroups = jailer.parentCgroup !== undefined ||
-      Object.keys(jailer.cgroups ?? {}).length > 0;
-    if (!usesCgroups || (jailer.cgroupVersion ?? 2) === 1) return null;
-    const parent = jailer.parentCgroup ?? this.#jail.execName;
-    const path = join("/sys/fs/cgroup", parent, this.#jail.id);
-    return removePathStep("remove-cgroup", path);
+    const path = this.#settings.cgroupPath;
+    return path === undefined ? null : removePathStep("remove-cgroup", path);
   }
 
   async #awaitApiReady(
@@ -1026,6 +1289,66 @@ export class Machine implements AsyncDisposable {
 
 function resolveIn(baseDir: string, path: string): string {
   return isAbsolute(path) ? path : join(baseDir, path);
+}
+
+// vmIds of every live Machine this process holds (launched, restored, or
+// adopted). Machine.adopt refuses vmIds present here — two live handles
+// on one pid would mean two shutdown sequencers and racing cleanup.
+// Entries clear when the machine's exit is observed (after which a
+// re-adopt correctly fails with "vmm-not-found").
+const liveVmIds = new Set<string>();
+
+/**
+ * The cgroup-v2 subtree the jailer creates for a machine, when cgroups
+ * are in use (`/sys/fs/cgroup/<parent ?? execName>/<id>`). Undefined for
+ * cgroup-v1 (per-controller layout, not one removable subtree) and when
+ * no cgroup options are set.
+ */
+function cgroupV2Path(
+  jailer: JailerOptions,
+  jail: JailPaths,
+): string | undefined {
+  const usesCgroups = jailer.parentCgroup !== undefined ||
+    Object.keys(jailer.cgroups ?? {}).length > 0;
+  if (!usesCgroups || (jailer.cgroupVersion ?? 2) === 1) return undefined;
+  return join(
+    "/sys/fs/cgroup",
+    jailer.parentCgroup ?? jail.execName,
+    jail.id,
+  );
+}
+
+/**
+ * Rebuild a jailed record's {@linkcode JailPaths} from its persisted
+ * fields. The original `computeJailPaths` inputs are not journaled, but
+ * the jailer layout is fixed — `<base>/<execName>/<id>/root` — so
+ * everything derives from `chrootDir`. Throws `AdoptError`
+ * (`"corrupt-record"`) when the record's paths don't agree with its vmId.
+ */
+function jailPathsFromRecord(record: JailRecord): JailPaths {
+  const jailRoot = record.chrootDir;
+  if (jailRoot === undefined) {
+    throw new AdoptError({ vmId: record.vmId, reason: "corrupt-record" });
+  }
+  const id = basename(jailRoot);
+  const execName = basename(dirname(jailRoot));
+  const chrootRoot = join(jailRoot, "root");
+  const pidfileHost = record.pidfilePath ??
+    join(chrootRoot, `${execName}.pid`);
+  if (
+    id !== record.vmId || execName === "" ||
+    basename(pidfileHost) !== `${execName}.pid`
+  ) {
+    throw new AdoptError({ vmId: record.vmId, reason: "corrupt-record" });
+  }
+  return {
+    chrootBase: dirname(dirname(jailRoot)),
+    execName,
+    id,
+    jailRoot,
+    chrootRoot,
+    pidfileHost,
+  };
 }
 
 /**

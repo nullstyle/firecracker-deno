@@ -41,6 +41,14 @@ export interface VmmSpawnOptions {
   env?: Record<string, string>;
   /** Ring-buffer capacity per stream, in bytes. @default 8192 */
   tailCapacity?: number;
+  /**
+   * What to do with the child's stdout/stderr: `"capture"` (default)
+   * pipes them into the in-memory tails; `"null"` discards them at spawn
+   * time. Discarding is what lets the process survive this supervisor's
+   * death — a pipe whose reader is gone wedges Firecracker on its next
+   * write (see `Machine.adopt`).
+   */
+  stdio?: "capture" | "null";
 }
 
 /**
@@ -64,15 +72,19 @@ export class VmmProcess implements VmmHandle {
   #stdoutRing: RingBuffer;
   #exit: VmmExit | null = null;
 
-  private constructor(child: Deno.ChildProcess, tailCapacity: number) {
+  private constructor(
+    child: Deno.ChildProcess,
+    tailCapacity: number,
+    captured: boolean,
+  ) {
     this.#child = child;
     this.pid = child.pid;
     const stderrRing = new RingBuffer(tailCapacity);
     const stdoutRing = new RingBuffer(tailCapacity);
     this.#stderrRing = stderrRing;
     this.#stdoutRing = stdoutRing;
-    const stderrDone = drain(child.stderr, stderrRing);
-    const stdoutDone = drain(child.stdout, stdoutRing);
+    const stderrDone = captured ? drain(child.stderr, stderrRing) : undefined;
+    const stdoutDone = captured ? drain(child.stdout, stdoutRing) : undefined;
     this.exited = (async () => {
       const status = await child.status;
       await Promise.allSettled([stderrDone, stdoutDone]);
@@ -86,17 +98,18 @@ export class VmmProcess implements VmmHandle {
     })();
   }
 
-  /** Spawn a process with piped, continuously-drained output. */
+  /** Spawn a process with drained-into-tails (or discarded) output. */
   static spawn(options: VmmSpawnOptions): VmmProcess {
+    const captured = options.stdio !== "null";
     const child = new Deno.Command(options.command, {
       args: options.args,
       cwd: options.cwd,
       env: options.env,
       stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
+      stdout: captured ? "piped" : "null",
+      stderr: captured ? "piped" : "null",
     }).spawn();
-    return new VmmProcess(child, options.tailCapacity ?? 8192);
+    return new VmmProcess(child, options.tailCapacity ?? 8192, captured);
   }
 
   /** The exit, if the process has already been observed to exit. */

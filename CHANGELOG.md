@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+MicroVM **adoption**: a restarted supervisor can re-attach to still-running VMs
+instead of killing them — crash recovery without losing sessions.
+
+- **`Machine.adopt({ record, registry })`**: reconstructs a live `Machine` from
+  a `JailRecord` without spawning anything. The pid is re-verified with positive
+  identity (cmdline `--id` token, `/proc` start-time when journaled), the API
+  socket must answer as that instance (`GET /` id check), and the machine lands
+  directly in `"running"`/`"paused"`. Refusals (`AdoptError`, code `FC_ADOPT`,
+  typed `reason`) never kill a process or touch files. Adopted machines are
+  always `pidfile-poll` exit authority: exit codes `null`,
+  `consoleTail()`/stderr empty, staged-path map lost — everything operational
+  (client, vsock, shutdown, disposal-with-reclaim) works in full.
+- **`recover(registry, opts)`**: the supervisor-restart sweep — adopts the
+  living, reclaims the dead, reports (or, with `onUnadoptable: "kill"`, puts
+  down) the live-but-unadoptable, with a per-record `decide` hook
+  (`"adopt" | "reclaim" | "keep"`) for stray-session policy. The single recovery
+  entry point: never follow it with `reconcile({ killLive: true })`. Aborting
+  the sweep resolves with the partial result — already-adopted handles are
+  delivered, never stranded — and an abort is never misread as an adoption
+  verdict (a cancelled kill-mode sweep cannot destroy an adoptable VM).
+- **`JailRecord` additions** (schema stays `version: 1`; 0.2.0 records adopt
+  fine, 0.3.0 records reconcile fine under 0.2.0): `cgroupPath` (resolved
+  cgroup-v2 dir, journaled before spawn — reclaim and adopted disposal now
+  remove the cgroup subtree the jailer never does, fixing a leak for crashed
+  jailed machines), `pidStartTime` (pid-reuse hardening), `adoptedAt` /
+  `supervisorPid` (adoption diagnostics — not a lease; one live supervisor per
+  registry directory remains a precondition).
+- `reconcile()` classification now also probes the jailer pidfile and the
+  journaled start-time, and reclaims `cgroupPath` for dead records; live-VMM
+  behavior is unchanged.
+- Stale guest-listener sockets (`vsockListenerPaths`) are unlinked during
+  adoption so `vm.vsock.listen` can rebind ports the previous supervisor held.
+- New `stdio: "capture" | "null"` machine/spawn option. The default captures
+  stdout/stderr for `consoleTail()`/`stderrTail`; machines that must survive a
+  supervisor crash need `"null"` — an orphaned capture pipe wedges real
+  Firecracker on its next write, freezing its API and making the VM unadoptable
+  (`"api-unreachable"`). Jailer `--daemonize` machines were never affected
+  (stdio already `/dev/null`).
+- The fake VMM (`testing/fake_vmm.ts`) now reports its `--id` in `GET /`
+  `InstanceInfo`, matching real Firecracker.
+- Docs: new `docs/adoption.md`; `docs/jailer.md` disambiguates chroot-reuse
+  refusal from process adoption; `examples/06-adopt.ts` is a crash-and-recover
+  demo; reliability contract gains invariant 6.
+
 ## 0.2.0 (2026-07-11)
 
 Version-realignment release: identical library content to 0.1.0 (published from

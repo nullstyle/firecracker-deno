@@ -32,6 +32,11 @@ for (const flag of ["--id", "--api-sock"]) {
 
 const sockIdx = Deno.args.indexOf("--api-sock");
 const socketPath = sockIdx === -1 ? undefined : Deno.args[sockIdx + 1];
+// Real Firecracker reports its --id in `GET /` InstanceInfo; mirror that
+// so identity checks (e.g. Machine.adopt's api-mismatch guard) see the
+// same behavior against the fake.
+const idIdx = Deno.args.indexOf("--id");
+const instanceId = idIdx === -1 ? undefined : Deno.args[idIdx + 1];
 const mode = Deno.env.get("FAKE_VMM_MODE") ?? "ready";
 const bindDelayMs = Number(Deno.env.get("FAKE_VMM_BIND_DELAY_MS") ?? "0");
 
@@ -70,6 +75,7 @@ switch (mode) {
     const fake = await FakeFirecracker.start({
       dir: await Deno.makeTempDir({ prefix: "fake-vmm-" }),
       socketPath,
+      ...(instanceId !== undefined ? { id: instanceId } : {}),
       onCtrlAltDel: () => setTimeout(() => Deno.exit(0), 5),
       vsockPathPrefix: Deno.env.get("FAKE_VMM_CHROOT"),
     });

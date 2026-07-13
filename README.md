@@ -1,8 +1,7 @@
 # @nullstyle/firecracker
 
-> **Status: 0.1.0, pre-publication.** Everything below is implemented and tested
-> (87 tests across four tiers, including real-KVM CI); the JSR release is
-> pending.
+> **Status: 0.2.0.** Everything below is implemented and tested (120+ tests
+> across four tiers, including real-KVM CI).
 
 **@nullstyle/firecracker** is a Deno-native toolkit for controlling
 [Firecracker](https://firecracker-microvm.github.io/) microVMs. It provides
@@ -17,7 +16,9 @@ local sandboxes, microVM runners, and higher-level platforms.
 ```ts
 import { DirRegistry, Machine, reconcile } from "@nullstyle/firecracker";
 
-// 1. Reclaim anything a previous crash left behind.
+// 1. Reclaim anything a previous crash left behind. (Fleet mode — kills
+//    survivors. To RE-ATTACH to them instead, use recover(); see
+//    docs/adoption.md.)
 const registry = new DirRegistry("/var/lib/sandbox-host/state");
 await reconcile(registry, { killLive: true });
 
@@ -95,6 +96,13 @@ The `Machine` layer maintains these invariants:
    de-escalates; concurrent shutdown calls share one outcome.
 5. **State-gated API** — operations illegal in the current lifecycle state fail
    with `InvalidStateError` instead of a cryptic API 400.
+6. **Adoption preserves the contract** — after a supervisor crash,
+   `recover()`/`Machine.adopt()` re-attach to still-running VMs (identity
+   positively re-verified before any kill-capable handle exists) and keep
+   invariants 1, 4, and 5. What an adopted machine loses is observability only:
+   exit codes (`code: null`), console/stderr tails (empty), and the staged-path
+   map. Precondition: one live supervisor per registry directory. See
+   [Adoption](docs/adoption.md).
 
 ## Requirements
 
@@ -133,6 +141,8 @@ verified by a CI smoke test (`tests/smoke/compile_smoke.ts`). Guides:
 
 - [Permissions](docs/permissions.md) — exact flags per feature
 - [Running jailed](docs/jailer.md) — threat model, path rules, exit authority
+- [Adoption](docs/adoption.md) — re-attaching to running VMs after a supervisor
+  crash
 - [Compatibility](docs/compatibility.md) — the two-minor Firecracker window
 - [macOS development](docs/macos-dev.md) — the no-VM loop, Lima recipe
 - [Testing your app](docs/testing-your-app.md) — building on `FakeFirecracker`

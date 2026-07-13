@@ -4,19 +4,20 @@
  * {@link JailRecord | records}. The other half of "reliable lifecycle
  * cleanup" — run it before launching new machines.
  *
+ * To *re-attach* to still-running machines instead of reporting (or
+ * killing) them, see `recover()` / `Machine.adopt()` — and never run
+ * `reconcile({ killLive: true })` after adopting: adopted machines'
+ * records are live records.
+ *
  * @module
  */
 
-import { removePathStep, runCleanupSteps } from "../cleanup.ts";
-import { CleanupError } from "../errors.ts";
-import { delay } from "../internal/async.ts";
 import {
-  findVmmPidByCmdline,
-  idCmdlineToken,
-  pidAlive,
-  pidMatchesVmm,
-} from "../internal/liveness.ts";
-import type { JailRecord, VmRegistry } from "./registry.ts";
+  findLiveVmm,
+  killAndWait,
+  reclaimRecordFiles,
+} from "../internal/records.ts";
+import type { VmRegistry } from "./registry.ts";
 
 /** Options for {@linkcode reconcile}. */
 export interface ReconcileOptions {
@@ -64,30 +65,15 @@ export async function reconcile(
   for (const record of await registry.list()) {
     opts.signal?.throwIfAborted();
     try {
-      // Identity tokens: the --id argv token works inside and outside a
-      // chroot; the host-view socket path additionally matches direct VMMs.
-      const tokens = [idCmdlineToken(record.vmId), record.apiSocketPath];
-      let pid = record.pid;
-      if (
-        pid !== null && !(pidAlive(pid) && await pidMatchesVmm(pid, tokens))
-      ) {
-        pid = null; // dead, or the pid was recycled by an unrelated process
-      }
-      if (pid === null) {
-        // Journal-gap rescue: the record may predate the pid update (crash
-        // between spawn and journal), or the pid may have been recycled —
-        // look for the actual VMM by cmdline before touching anything.
-        pid = await findVmmPidByCmdline(tokens);
-      }
-      const alive = pid !== null && pidAlive(pid);
-      if (alive && opts.killLive !== true) {
+      const live = await findLiveVmm(record);
+      if (live !== null && opts.killLive !== true) {
         result.stillRunning.push(record.vmId);
         continue;
       }
-      if (alive) {
-        await killAndWait(pid!, opts.killTimeoutMs ?? 5_000, opts.signal);
+      if (live !== null) {
+        await killAndWait(live.pid, opts.killTimeoutMs ?? 5_000, opts.signal);
       }
-      await reclaimFiles(record);
+      await reclaimRecordFiles(record);
       await registry.remove(record.vmId);
       result.reclaimed.push(record.vmId);
     } catch (error) {
@@ -95,57 +81,4 @@ export async function reconcile(
     }
   }
   return result;
-}
-
-async function killAndWait(
-  pid: number,
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<void> {
-  try {
-    Deno.kill(pid, "SIGKILL");
-  } catch {
-    // already gone
-  }
-  const deadline = performance.now() + timeoutMs;
-  while (pidAlive(pid)) {
-    if (performance.now() >= deadline) {
-      throw new Error(
-        `pid ${pid} still exists ${timeoutMs}ms after SIGKILL (unkillable or unreaped zombie)`,
-      );
-    }
-    await delay(50, signal);
-  }
-}
-
-async function reclaimFiles(record: JailRecord): Promise<void> {
-  const steps = [
-    removePathStep("unlink-api-socket", record.apiSocketPath),
-  ];
-  if (record.vsockUdsPath !== undefined) {
-    steps.push(removePathStep("unlink-vsock-uds", record.vsockUdsPath));
-  }
-  for (const path of record.vsockListenerPaths) {
-    steps.push(removePathStep("unlink-vsock-listener", path));
-  }
-  if (record.pidfilePath !== undefined) {
-    steps.push(removePathStep("unlink-pidfile", record.pidfilePath));
-  }
-  if (record.chrootDir !== undefined) {
-    steps.push(
-      removePathStep("remove-chroot", record.chrootDir, { recursive: true }),
-    );
-  }
-  if (record.ownsStateDir) {
-    steps.push(
-      removePathStep("remove-state-dir", record.stateDir, { recursive: true }),
-    );
-  }
-  const failures = await runCleanupSteps(steps);
-  if (failures.length > 0) {
-    throw new CleanupError({
-      failures,
-      leaked: failures.flatMap((f) => f.path === undefined ? [] : [f.path]),
-    });
-  }
 }

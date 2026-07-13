@@ -1,6 +1,6 @@
 # @nullstyle/firecracker
 
-> **Status: 0.2.0.** Everything below is implemented and tested (120+ tests
+> **Status: 0.3.0.** Everything below is implemented and tested (130+ tests
 > across four tiers, including real-KVM CI).
 
 **@nullstyle/firecracker** is a Deno-native toolkit for controlling

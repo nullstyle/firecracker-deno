@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-07-12)
 
 MicroVM **adoption**: a restarted supervisor can re-attach to still-running VMs
 instead of killing them — crash recovery without losing sessions.

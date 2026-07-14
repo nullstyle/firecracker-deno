@@ -50,7 +50,6 @@ export {
   AdoptError,
   ApiError,
   CleanupError,
-  type CleanupFailure,
   FirecrackerError,
   InvalidStateError,
   JailerConfigError,
@@ -85,9 +84,11 @@ export {
   type ReconcileOptions,
   type ReconcileResult,
 } from "./src/registry/reconcile.ts";
-export type { JailRecord, VmRegistry } from "./src/registry/registry.ts";
+export type { JailRecord } from "./src/registry/record.ts";
+export type { VmRegistry } from "./src/registry/registry.ts";
 export type {
   AdoptFailureReason,
+  CleanupFailure,
   ExitObservation,
   ShutdownOptions,
   ShutdownStage,

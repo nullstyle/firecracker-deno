@@ -1,7 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { DirRegistry } from "../../src/registry/dir_registry.ts";
-import type { JailRecord } from "../../src/registry/registry.ts";
+import type { JailRecord } from "../../src/registry/record.ts";
 
 function record(vmId: string, patch: Partial<JailRecord> = {}): JailRecord {
   return {

@@ -6,7 +6,7 @@
  * @module
  */
 
-import { basename, dirname, isAbsolute, join, resolve } from "@std/path";
+import { isAbsolute, join, resolve } from "@std/path";
 import { FirecrackerClient } from "../api/client.ts";
 import type {
   InstanceInfo,
@@ -16,7 +16,6 @@ import type {
 import { cleanupError, removePathStep, runCleanupSteps } from "../cleanup.ts";
 import {
   AdoptError,
-  type CleanupFailure,
   JailerConfigError,
   ProcessExitedError,
   ReadinessTimeoutError,
@@ -27,36 +26,37 @@ import {
   type JailerOptions,
   validateJailerOptions,
 } from "../jailer/options.ts";
-import {
-  computeJailPaths,
-  hostPathOf,
-  type JailPaths,
-} from "../jailer/paths.ts";
+import { cgroupV2Path, computeJailPaths, hostPathOf } from "../jailer/paths.ts";
 import { withDeadline } from "../internal/async.ts";
 import {
   findVmmPidByCmdline,
   idCmdlineToken,
   readPidStartTime,
 } from "../internal/liveness.ts";
+import { findLiveVmm, killAndWait } from "../internal/records.ts";
 import {
   cleanupStepsForResources,
-  findLiveVmm,
-  killAndWait,
   listenerPaths,
   type MachineResources,
+} from "../internal/resources.ts";
+import {
+  type JailRecord,
   recordFromResources,
   resourcesFromRecord,
-} from "../internal/records.ts";
+  validateJailRecord,
+} from "../registry/record.ts";
 import { stageChroot } from "../jailer/stage.ts";
-import {
-  ReparentedVmm,
-  tryReadPidfile,
-  waitForPidfile,
-} from "../process/pidfile.ts";
+import { tryReadPidfile, waitForPidfile } from "../process/pidfile.ts";
+import { ReparentedVmm } from "../process/reparented.ts";
 import { escalatingShutdown } from "../process/shutdown.ts";
 import { VmmProcess } from "../process/supervisor.ts";
-import type { JailRecord, VmRegistry } from "../registry/registry.ts";
-import type { ShutdownOptions, VmmExit, VmState } from "../types.ts";
+import type { VmRegistry } from "../registry/registry.ts";
+import type {
+  CleanupFailure,
+  ShutdownOptions,
+  VmmExit,
+  VmState,
+} from "../types.ts";
 import type { VsockConn } from "../vsock/conn.ts";
 import { connectVsock, type VsockDialOptions } from "../vsock/dial.ts";
 import { listenVsock, type VsockListener } from "../vsock/listen.ts";
@@ -1159,43 +1159,6 @@ function resolveIn(baseDir: string, path: string): string {
 // Entries clear when the machine's exit is observed (after which a
 // re-adopt correctly fails with "vmm-not-found").
 const liveVmIds = new Set<string>();
-
-/**
- * The cgroup-v2 subtree the jailer creates for a machine, when cgroups
- * are in use (`/sys/fs/cgroup/<parent ?? execName>/<id>`). Undefined for
- * cgroup-v1 (per-controller layout, not one removable subtree) and when
- * no cgroup options are set.
- */
-function cgroupV2Path(
-  jailer: JailerOptions,
-  jail: JailPaths,
-): string | undefined {
-  const usesCgroups = jailer.parentCgroup !== undefined ||
-    Object.keys(jailer.cgroups ?? {}).length > 0;
-  if (!usesCgroups || (jailer.cgroupVersion ?? 2) === 1) return undefined;
-  return join(
-    "/sys/fs/cgroup",
-    jailer.parentCgroup ?? jail.execName,
-    jail.id,
-  );
-}
-
-/** Reject a jailed record whose persisted layout disagrees with its vmId. */
-function validateJailRecord(record: JailRecord): void {
-  const jailRoot = record.chrootDir;
-  if (jailRoot === undefined) return;
-  const id = basename(jailRoot);
-  const execName = basename(dirname(jailRoot));
-  const chrootRoot = join(jailRoot, "root");
-  const pidfileHost = record.pidfilePath ??
-    join(chrootRoot, `${execName}.pid`);
-  if (
-    id !== record.vmId || execName === "" ||
-    basename(pidfileHost) !== `${execName}.pid`
-  ) {
-    throw new AdoptError({ vmId: record.vmId, reason: "corrupt-record" });
-  }
-}
 
 /**
  * Resolve a user-supplied binary path the way a shell would: bare names

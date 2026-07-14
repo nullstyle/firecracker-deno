@@ -1,24 +1,17 @@
 /**
- * Pidfile-based exit authority for reparented VMMs.
+ * Pidfile discovery for reparented VMMs.
  *
  * With jailer `--daemonize` or `--new-pid-ns`, the process we spawned (the
  * jailer) exits immediately while the real Firecracker lives on as someone
  * else's child. `ChildProcess.status` is a lie in those modes; the truth
  * is the pidfile Firecracker writes at `<chroot>/root/<exec>.pid`, plus
- * signal-0 liveness polling. Exit *codes* are unobservable here — a
- * pidfile-authority {@linkcode VmmExit} always has `code: null`.
+ * signal-0 liveness polling.
  *
  * @module
  */
 
 import { JailerConfigError } from "../errors.ts";
 import { delay } from "../internal/async.ts";
-import {
-  pidAlive,
-  pidMatchesVmm,
-  pidMatchesVmmSync,
-} from "../internal/liveness.ts";
-import type { VmmExit } from "../types.ts";
 import type { VmmProcess } from "./supervisor.ts";
 
 export async function waitForPidfile(
@@ -67,72 +60,5 @@ export async function tryReadPidfile(path: string): Promise<number | null> {
     return Number.isInteger(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
-  }
-}
-
-export class ReparentedVmm {
-  readonly pid: number;
-  readonly exited: Promise<VmmExit>;
-
-  #exit: VmmExit | null = null;
-  #jailerStderr: () => string;
-  #identityTokens: string[];
-
-  constructor(
-    pid: number,
-    opts: {
-      jailerStderr: () => string;
-      pollIntervalMs?: number;
-      identityToken?: string;
-    },
-  ) {
-    this.pid = pid;
-    const jailerStderr = opts.jailerStderr;
-    this.#jailerStderr = jailerStderr;
-    const tokens = opts.identityToken === undefined ? [] : [opts.identityToken];
-    this.#identityTokens = tokens;
-    const pollIntervalMs = opts.pollIntervalMs ?? 100;
-    this.exited = (async () => {
-      while (
-        pidAlive(pid) &&
-        (tokens.length === 0 || await pidMatchesVmm(pid, tokens))
-      ) {
-        await delay(pollIntervalMs);
-      }
-      this.#exit = {
-        code: null,
-        signal: null,
-        observedVia: "pidfile-poll",
-        stderrTail: jailerStderr(),
-      };
-      return this.#exit;
-    })();
-  }
-
-  get exit(): VmmExit | null {
-    return this.#exit;
-  }
-
-  stderrTail(): string {
-    return this.#jailerStderr();
-  }
-
-  stdoutTail(): string {
-    return "";
-  }
-
-  kill(signal: Deno.Signal): void {
-    if (this.#exit !== null) return;
-    if (
-      this.#identityTokens.length > 0 &&
-      !pidMatchesVmmSync(this.pid, this.#identityTokens)
-    ) {
-      return;
-    }
-    try {
-      Deno.kill(this.pid, signal);
-    } catch {
-      // already gone
-    }
   }
 }

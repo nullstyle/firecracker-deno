@@ -6,15 +6,9 @@
  * @module
  */
 
-import { isAbsolute, relative } from "@std/path";
-import {
-  cleanupError,
-  type CleanupStep,
-  removePathStep,
-  runCleanupSteps,
-} from "../cleanup.ts";
+import { cleanupError, runCleanupSteps } from "../cleanup.ts";
 import { tryReadPidfile } from "../process/pidfile.ts";
-import type { JailRecord } from "../registry/registry.ts";
+import { type JailRecord, resourcesFromRecord } from "../registry/record.ts";
 import { delay } from "./async.ts";
 import {
   findVmmPidByCmdline,
@@ -23,133 +17,7 @@ import {
   pidIdentity,
   readPidStartTime,
 } from "./liveness.ts";
-
-/** A live listener whose socket must be closed before filesystem reclaim. */
-export interface ResourceListener extends AsyncDisposable {
-  readonly path: string;
-}
-
-/**
- * Every filesystem resource owned by, or explicitly created for, a machine.
- * This is the shared source for live-machine cleanup and record reclamation.
- */
-export interface MachineResources {
-  apiSocketPath: string;
-  stateDir: string;
-  ownsStateDir: boolean;
-  vsockUdsPath?: string;
-  vsockListeners: Set<string | ResourceListener>;
-  pidfilePath?: string;
-  chrootDir?: string;
-  cgroupPath?: string;
-}
-
-/** Rehydrate the resource manifest persisted in a v1 record. */
-export function resourcesFromRecord(
-  record: JailRecord,
-  listenerPaths: readonly string[] = record.vsockListenerPaths,
-): MachineResources {
-  return {
-    apiSocketPath: record.apiSocketPath,
-    stateDir: record.stateDir,
-    ownsStateDir: record.ownsStateDir,
-    vsockUdsPath: record.vsockUdsPath,
-    vsockListeners: new Set<string | ResourceListener>(listenerPaths),
-    pidfilePath: record.pidfilePath,
-    chrootDir: record.chrootDir,
-    cgroupPath: record.cgroupPath,
-  };
-}
-
-/** The listener paths represented by a resource manifest. */
-export function listenerPaths(resources: MachineResources): string[] {
-  return [...resources.vsockListeners].map((listener) =>
-    typeof listener === "string" ? listener : listener.path
-  );
-}
-
-/** Build the unchanged v1 pre-spawn journal shape from machine resources. */
-export function recordFromResources(
-  vmId: string,
-  resources: MachineResources,
-  metadata?: Record<string, string>,
-): JailRecord {
-  const record: JailRecord = {
-    version: 1,
-    vmId,
-    pid: null,
-    apiSocketPath: resources.apiSocketPath,
-    stateDir: resources.stateDir,
-    ownsStateDir: resources.ownsStateDir,
-    vsockListenerPaths: listenerPaths(resources),
-    createdAt: new Date().toISOString(),
-  };
-  if (resources.vsockUdsPath !== undefined) {
-    record.vsockUdsPath = resources.vsockUdsPath;
-  }
-  if (resources.pidfilePath !== undefined) {
-    record.pidfilePath = resources.pidfilePath;
-  }
-  if (resources.chrootDir !== undefined) record.chrootDir = resources.chrootDir;
-  if (resources.cgroupPath !== undefined) {
-    record.cgroupPath = resources.cgroupPath;
-  }
-  if (metadata !== undefined) record.metadata = metadata;
-  return record;
-}
-
-/**
- * Build cleanup in dependency order: close live listeners, remove owned
- * roots, unlink legacy resources outside those roots, and remove cgroups last.
- */
-export function cleanupStepsForResources(
-  resources: MachineResources,
-): CleanupStep[] {
-  const steps: CleanupStep[] = [];
-  for (const listener of resources.vsockListeners) {
-    if (typeof listener === "string") continue;
-    steps.push({
-      step: "close-vsock-listener",
-      path: listener.path,
-      async run() {
-        await listener[Symbol.asyncDispose]();
-      },
-    });
-  }
-
-  const roots: string[] = [];
-  const addPath = (
-    step: string,
-    path: string | undefined,
-    recursive = false,
-  ) => {
-    if (path === undefined || roots.some((root) => containsPath(root, path))) {
-      return;
-    }
-    if (recursive) roots.push(path);
-    steps.push(removePathStep(step, path, { recursive }));
-  };
-  addPath("remove-chroot", resources.chrootDir, true);
-  if (resources.ownsStateDir) {
-    addPath("remove-state-dir", resources.stateDir, true);
-  }
-  addPath("unlink-api-socket", resources.apiSocketPath);
-  addPath("unlink-vsock-uds", resources.vsockUdsPath);
-  for (const path of listenerPaths(resources)) {
-    addPath("unlink-vsock-listener", path);
-  }
-  addPath("unlink-pidfile", resources.pidfilePath);
-  if (resources.cgroupPath !== undefined) {
-    steps.push(removePathStep("remove-cgroup", resources.cgroupPath));
-  }
-  return steps;
-}
-
-function containsPath(root: string, path: string): boolean {
-  const child = relative(root, path);
-  return child === "" ||
-    (child !== ".." && !child.startsWith("../") && !isAbsolute(child));
-}
+import { cleanupStepsForResources } from "./resources.ts";
 
 /** A record's live VMM, and how strongly its identity was established. */
 export interface LiveVmm {

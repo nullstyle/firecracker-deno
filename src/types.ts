@@ -100,6 +100,16 @@ export interface ShutdownOptions {
   sigkillTimeoutMs?: number;
 }
 
+/** One failed step within a cleanup pass. */
+export interface CleanupFailure {
+  /** The reclaim step that failed, e.g. `"unlink-vsock-listener"`. */
+  step: string;
+  /** Filesystem path involved, when applicable. */
+  path?: string;
+  /** The underlying error. */
+  cause: unknown;
+}
+
 /**
  * Why a host-to-guest vsock dial failed.
  *

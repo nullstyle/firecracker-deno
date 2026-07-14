@@ -38,7 +38,8 @@ import {
   killAndWait,
   reclaimRecordFiles,
 } from "../internal/records.ts";
-import type { JailRecord, VmRegistry } from "../registry/registry.ts";
+import type { JailRecord } from "../registry/record.ts";
+import type { VmRegistry } from "../registry/registry.ts";
 import type { AdoptFailureReason, ShutdownOptions } from "../types.ts";
 import { Machine } from "./machine.ts";
 

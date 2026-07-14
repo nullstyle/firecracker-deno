@@ -5,7 +5,11 @@ import {
   type JailerOptions,
   validateJailerOptions,
 } from "../../src/jailer/options.ts";
-import { computeJailPaths, hostPathOf } from "../../src/jailer/paths.ts";
+import {
+  cgroupV2Path,
+  computeJailPaths,
+  hostPathOf,
+} from "../../src/jailer/paths.ts";
 import { planStaging } from "../../src/jailer/stage.ts";
 
 const BASE: JailerOptions = {
@@ -91,6 +95,23 @@ Deno.test("paths: chroot layout and host path mapping", () => {
 Deno.test("paths: default chroot base matches the jailer's", () => {
   const paths = computeJailPaths({ firecrackerBin: "firecracker", id: "x" });
   assertEquals(paths.jailRoot, "/srv/jailer/firecracker/x");
+});
+
+Deno.test("paths: cgroup-v2 layout follows the jailer hierarchy", () => {
+  const paths = computeJailPaths({ firecrackerBin: "firecracker", id: "vm-1" });
+  assertEquals(cgroupV2Path({}, paths), undefined);
+  assertEquals(
+    cgroupV2Path({ cgroups: { "cpu.weight": "50" } }, paths),
+    "/sys/fs/cgroup/firecracker/vm-1",
+  );
+  assertEquals(
+    cgroupV2Path({ parentCgroup: "sandboxes" }, paths),
+    "/sys/fs/cgroup/sandboxes/vm-1",
+  );
+  assertEquals(
+    cgroupV2Path({ cgroups: { "cpu.weight": "50" }, cgroupVersion: 1 }, paths),
+    undefined,
+  );
 });
 
 Deno.test("validation rejects bad ids, exec names, uids, and staging", () => {

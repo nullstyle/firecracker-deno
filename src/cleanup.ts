@@ -6,7 +6,8 @@
  * @module
  */
 
-import { CleanupError, type CleanupFailure } from "./errors.ts";
+import { CleanupError } from "./errors.ts";
+import type { CleanupFailure } from "./types.ts";
 
 export interface CleanupStep {
   step: string;

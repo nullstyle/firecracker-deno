@@ -30,6 +30,7 @@
 
 import type {
   AdoptFailureReason,
+  CleanupFailure,
   ShutdownStage,
   VmmExit,
   VmState,
@@ -302,16 +303,6 @@ export class AdoptError extends FirecrackerError {
     this.vmId = opts.vmId;
     this.reason = opts.reason;
   }
-}
-
-/** One failed step within a cleanup pass. */
-export interface CleanupFailure {
-  /** The reclaim step that failed, e.g. `"unlink-vsock-listener"`. */
-  step: string;
-  /** Filesystem path involved, when applicable. */
-  path?: string;
-  /** The underlying error. */
-  cause: unknown;
 }
 
 /**

@@ -6,7 +6,8 @@
  */
 
 import { join } from "@std/path";
-import type { JailRecord, VmRegistry } from "./registry.ts";
+import type { JailRecord } from "./record.ts";
+import type { VmRegistry } from "./registry.ts";
 
 const VM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 

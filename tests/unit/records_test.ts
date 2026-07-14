@@ -2,10 +2,12 @@ import { assert, assertEquals } from "@std/assert";
 import {
   cleanupStepsForResources,
   type MachineResources,
-  recordFromResources,
   type ResourceListener,
+} from "../../src/internal/resources.ts";
+import {
+  recordFromResources,
   resourcesFromRecord,
-} from "../../src/internal/records.ts";
+} from "../../src/registry/record.ts";
 
 Deno.test("resource records retain the exact v1 persisted shape", () => {
   const resources: MachineResources = {

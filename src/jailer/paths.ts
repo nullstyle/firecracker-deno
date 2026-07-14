@@ -48,6 +48,29 @@ export function computeJailPaths(opts: {
 }
 
 /**
+ * The cgroup-v2 subtree the jailer creates for a machine, when cgroups are
+ * in use. Cgroup-v1 has per-controller layouts rather than one removable
+ * subtree, so it has no corresponding manifest path.
+ */
+export function cgroupV2Path(
+  options: {
+    parentCgroup?: string;
+    cgroups?: Record<string, string>;
+    cgroupVersion?: 1 | 2;
+  },
+  paths: JailPaths,
+): string | undefined {
+  const usesCgroups = options.parentCgroup !== undefined ||
+    Object.keys(options.cgroups ?? {}).length > 0;
+  if (!usesCgroups || (options.cgroupVersion ?? 2) === 1) return undefined;
+  return join(
+    "/sys/fs/cgroup",
+    options.parentCgroup ?? paths.execName,
+    paths.id,
+  );
+}
+
+/**
  * Map an in-jail path (as Firecracker sees it, e.g. `"/v.sock"`) to its
  * host-side location under the chroot.
  */

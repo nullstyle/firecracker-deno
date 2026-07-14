@@ -1,13 +1,20 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import { join } from "@std/path";
+import { Machine, VsockDialError } from "../../mod.ts";
+import { FirecrackerClient } from "../../src/api/mod.ts";
+import { writeAll } from "../../src/internal/line_reader.ts";
+import { wrapVsockConn } from "../../src/vsock/conn.ts";
 import {
   connectVsock,
-  FirecrackerClient,
   listenVsock,
-  Machine,
-  VsockDialError,
-} from "../../mod.ts";
-import { writeAll } from "../../src/internal/line_reader.ts";
+  type VsockListener,
+} from "../../src/vsock/mod.ts";
 import { FakeFirecracker } from "../../testing/mod.ts";
 import { makeFakeVmmBin } from "./fake_vmm_helper.ts";
 
@@ -44,6 +51,56 @@ async function bootedFake(withEchoOn?: number): Promise<FakeFirecracker> {
   await client.instanceStart();
   return fake;
 }
+
+Deno.test("wrapVsockConn decorates the native Unix connection", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "vsock-conn-" });
+  const path = join(dir, "device.sock");
+  const listener = Deno.listen({ transport: "unix", path });
+  try {
+    const accepting = listener.accept();
+    const inner = await Deno.connect({ transport: "unix", path });
+    const peer = await accepting;
+    try {
+      const conn = wrapVsockConn(inner, 5000, 42);
+      assertStrictEquals(conn, inner);
+      assertEquals(Object.getOwnPropertyDescriptor(conn, "guestPort"), {
+        value: 5000,
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+      assertEquals(
+        Object.getOwnPropertyDescriptor(conn, "assignedHostPort"),
+        {
+          value: 42,
+          writable: false,
+          enumerable: true,
+          configurable: false,
+        },
+      );
+      assertThrows(() => {
+        (conn as unknown as { guestPort: number }).guestPort = 1;
+      }, TypeError);
+      assertEquals(conn.localAddr.transport, "unix");
+      assertEquals(conn.remoteAddr.transport, "unix");
+      assert(conn.readable instanceof ReadableStream);
+      assert(conn.writable instanceof WritableStream);
+      conn.unref();
+      conn.ref();
+
+      conn[Symbol.dispose]();
+      await assertRejects(
+        () => conn.write(new Uint8Array([1])),
+        Deno.errors.BadResource,
+      );
+    } finally {
+      peer.close();
+    }
+  } finally {
+    listener.close();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
 
 Deno.test("connectVsock: handshake, echo, endpoints exposed", async () => {
   await using fake = await bootedFake(5000);
@@ -219,6 +276,44 @@ Deno.test("listenVsock: accepts a guest-initiated stream and unlinks on dispose"
     guest.close();
   }
   assertEquals(await Deno.stat(listenerPath).catch(() => null), null);
+});
+
+Deno.test("listenVsock decorates native listener and closes idempotently", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "vsock-listener-" });
+  const udsPath = join(dir, "device.sock");
+  const listenerPath = `${udsPath}_7000`;
+  const listener = listenVsock(udsPath, 7000);
+  const native = listener as VsockListener & Deno.UnixListener;
+  try {
+    assertEquals(Object.getOwnPropertyDescriptor(listener, "path"), {
+      value: listenerPath,
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
+    assertEquals(Object.getOwnPropertyDescriptor(listener, "port"), {
+      value: 7000,
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
+    assertThrows(() => {
+      (listener as unknown as { port: number }).port = 1;
+    }, TypeError);
+    assertEquals(native.addr.transport, "unix");
+    assertEquals(native.addr.path, listenerPath);
+    native.unref();
+    native.ref();
+
+    const pending = native[Symbol.asyncIterator]().next();
+    listener.close();
+    listener.close();
+    assertEquals(await pending, { value: undefined, done: true });
+  } finally {
+    await listener[Symbol.asyncDispose]();
+    assertEquals(await Deno.stat(listenerPath).catch(() => null), null);
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
 });
 
 Deno.test("machine.vsock: end-to-end connect + listen with cleanup", async () => {

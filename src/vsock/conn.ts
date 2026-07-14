@@ -24,59 +24,9 @@ export function wrapVsockConn(
   guestPort: number,
   assignedHostPort: number,
 ): VsockConn {
-  return new VsockConnImpl(inner, guestPort, assignedHostPort);
-}
-
-class VsockConnImpl implements VsockConn {
-  readonly guestPort: number;
-  readonly assignedHostPort: number;
-  #inner: Deno.UnixConn;
-
-  constructor(
-    inner: Deno.UnixConn,
-    guestPort: number,
-    assignedHostPort: number,
-  ) {
-    this.#inner = inner;
-    this.guestPort = guestPort;
-    this.assignedHostPort = assignedHostPort;
-  }
-
-  get localAddr(): Deno.Addr {
-    return this.#inner.localAddr;
-  }
-  get remoteAddr(): Deno.Addr {
-    return this.#inner.remoteAddr;
-  }
-  get readable(): ReadableStream<Uint8Array<ArrayBuffer>> {
-    return this.#inner.readable;
-  }
-  get writable(): WritableStream<Uint8Array<ArrayBufferLike>> {
-    return this.#inner.writable;
-  }
-  read(p: Uint8Array): Promise<number | null> {
-    return this.#inner.read(p);
-  }
-  write(p: Uint8Array): Promise<number> {
-    return this.#inner.write(p);
-  }
-  closeWrite(): Promise<void> {
-    return this.#inner.closeWrite();
-  }
-  close(): void {
-    this.#inner.close();
-  }
-  ref(): void {
-    this.#inner.ref();
-  }
-  unref(): void {
-    this.#inner.unref();
-  }
-  [Symbol.dispose](): void {
-    try {
-      this.#inner.close();
-    } catch {
-      // already closed
-    }
-  }
+  Object.defineProperties(inner, {
+    guestPort: { value: guestPort, enumerable: true },
+    assignedHostPort: { value: assignedHostPort, enumerable: true },
+  });
+  return inner as VsockConn;
 }

@@ -17,6 +17,7 @@
  */
 
 import { ApiError, ReadinessTimeoutError, TransportError } from "../errors.ts";
+import { delay } from "../internal/async.ts";
 import { type ApiTransport, UnixHttpTransport } from "./transport.ts";
 import type {
   Balloon,
@@ -90,57 +91,10 @@ export interface WaitReadyOptions {
 }
 
 /**
- * Spec-operation inventory: `"METHOD /path"` (as written in the swagger,
- * with `{param}` placeholders) → the {@linkcode FirecrackerClient} method
- * covering it. Exists so tests can prove the client covers the entire
- * pinned spec surface; grows in lockstep with the spec.
- */
-export const API_OPERATIONS: Readonly<Record<string, string>> = {
-  "GET /": "getInstanceInfo",
-  "PUT /actions": "putAction",
-  "GET /balloon": "getBalloon",
-  "PUT /balloon": "putBalloon",
-  "PATCH /balloon": "patchBalloon",
-  "GET /balloon/statistics": "getBalloonStats",
-  "PATCH /balloon/statistics": "patchBalloonStatsInterval",
-  "PATCH /balloon/hinting/start": "startBalloonHinting",
-  "GET /balloon/hinting/status": "getBalloonHintingStatus",
-  "PATCH /balloon/hinting/stop": "stopBalloonHinting",
-  "PUT /boot-source": "putBootSource",
-  "PUT /cpu-config": "putCpuConfig",
-  "PUT /drives/{drive_id}": "putDrive",
-  "PATCH /drives/{drive_id}": "patchDrive",
-  "PUT /pmem/{id}": "putPmem",
-  "PATCH /pmem/{id}": "patchPmem",
-  "PUT /logger": "putLogger",
-  "GET /machine-config": "getMachineConfig",
-  "PUT /machine-config": "putMachineConfig",
-  "PATCH /machine-config": "patchMachineConfig",
-  "PUT /metrics": "putMetrics",
-  "GET /mmds": "getMmds",
-  "PUT /mmds": "putMmds",
-  "PATCH /mmds": "patchMmds",
-  "PUT /mmds/config": "putMmdsConfig",
-  "PUT /entropy": "putEntropyDevice",
-  "PUT /serial": "putSerialDevice",
-  "GET /hotplug/memory": "getMemoryHotplug",
-  "PUT /hotplug/memory": "putMemoryHotplug",
-  "PATCH /hotplug/memory": "patchMemoryHotplug",
-  "PUT /network-interfaces/{iface_id}": "putNetworkInterface",
-  "PATCH /network-interfaces/{iface_id}": "patchNetworkInterface",
-  "PUT /snapshot/create": "createSnapshot",
-  "PUT /snapshot/load": "loadSnapshot",
-  "GET /version": "getVersion",
-  "PATCH /vm": "patchVm",
-  "GET /vm/config": "getVmConfig",
-  "PUT /vsock": "putVsock",
-};
-
-/**
  * Typed Firecracker API client over a Unix domain socket.
  *
- * Every method maps 1:1 onto a spec endpoint (see {@linkcode API_OPERATIONS})
- * and throws {@linkcode ApiError} on non-2xx responses or
+ * Every endpoint in the pinned spec has a typed method, and each method throws
+ * {@linkcode ApiError} on non-2xx responses or
  * {@linkcode TransportError} when the socket is unreachable. Methods whose
  * endpoint takes a path parameter derive it from the body's own id field
  * (e.g. {@linkcode FirecrackerClient.putDrive} uses `drive.drive_id`), so an
@@ -623,18 +577,4 @@ export class FirecrackerClient implements Disposable {
     const res = await this.#request(method, path, body, opts);
     return await res.json() as T;
   }
-}
-
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const id = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(id);
-      reject(signal!.reason);
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }

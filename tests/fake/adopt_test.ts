@@ -2,13 +2,14 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { dirname, fromFileUrl, join } from "@std/path";
 import {
   AdoptError,
+  CleanupError,
   DirRegistry,
-  listenVsock,
   Machine,
   recover,
 } from "../../mod.ts";
 import type { JailRecord } from "../../mod.ts";
 import { pidAlive } from "../../src/internal/liveness.ts";
+import { listenVsock } from "../../src/vsock/mod.ts";
 import { makeFakeVmmBin } from "./fake_vmm_helper.ts";
 
 const HERE = dirname(fromFileUrl(import.meta.url));
@@ -161,6 +162,46 @@ Deno.test("adopt reattaches to a live orphan: API, vsock, listeners, shutdown, d
   });
 });
 
+Deno.test("adopt retains a listener path when stale unlink fails", async () => {
+  await withDir(async (dir) => {
+    const vmmPid = await orphanVmm(dir);
+    try {
+      const registry = new DirRegistry(join(dir, "registry"));
+      const [original] = await registry.list();
+      const blockedListener = join(dir, "blocked-listener");
+      await Deno.mkdir(blockedListener);
+      await Deno.writeTextFile(join(blockedListener, "keep"), "not a socket");
+      await registry.update(original.vmId, {
+        vsockListenerPaths: [blockedListener],
+      });
+      const [record] = await registry.list();
+
+      const vm = await Machine.adopt({ record, registry });
+      assertEquals((await registry.list())[0].vsockListenerPaths, [
+        blockedListener,
+      ]);
+      await vm.shutdown();
+      const cleanup = await assertRejects(
+        () => vm[Symbol.asyncDispose](),
+        CleanupError,
+      );
+      assert(
+        cleanup.failures.some((failure) =>
+          failure.step === "unlink-vsock-listener" &&
+          failure.path === blockedListener
+        ),
+      );
+      assertEquals(
+        (await registry.list())[0].vsockListenerPaths,
+        [blockedListener],
+        "failed cleanup must retain its registry authority",
+      );
+    } finally {
+      killQuietly(vmmPid);
+    }
+  });
+});
+
 Deno.test("adopt of a dead record refuses and touches nothing", async () => {
   await withDir(async (dir) => {
     const registry = new DirRegistry(join(dir, "registry"));
@@ -242,7 +283,7 @@ Deno.test({
       }).spawn();
       try {
         // Boot it so it is adoptable, driving the API directly.
-        const { FirecrackerClient } = await import("../../mod.ts");
+        const { FirecrackerClient } = await import("../../src/api/mod.ts");
         using client = new FirecrackerClient({ socketPath: apiSocketPath });
         await client.waitReady({ timeoutMs: 5_000 });
         await client.putBootSource({ kernel_image_path: "/vmlinux" });

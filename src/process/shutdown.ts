@@ -9,22 +9,11 @@ import { ShutdownTimeoutError } from "../errors.ts";
 import { withDeadline } from "../internal/async.ts";
 import type { ShutdownOptions, VmmExit } from "../types.ts";
 
-/** What the sequencer needs from a machine; injectable for tests. */
-export interface ShutdownTarget {
-  /** Ask the guest to power off (`SendCtrlAltDel`). May reject if the API is gone. */
+interface ShutdownTarget {
   sendCtrlAltDel(): Promise<void>;
-  /** Deliver a signal to the VMM process. */
   kill(signal: Deno.Signal): void;
-  /** Resolves when the VMM process exits. */
   exited: Promise<VmmExit>;
 }
-
-/** Resolved default deadlines for {@linkcode escalatingShutdown}. */
-export const SHUTDOWN_DEFAULTS = {
-  ctrlAltDelTimeoutMs: 10_000,
-  sigtermTimeoutMs: 5_000,
-  sigkillTimeoutMs: 2_000,
-} as const;
 
 /**
  * Run the escalating shutdown sequence against `target` and return the
@@ -40,10 +29,11 @@ export async function escalatingShutdown(
   opts: ShutdownOptions = {},
   arch: string = Deno.build.arch,
 ): Promise<VmmExit> {
-  const ctrlAltDelMs = opts.ctrlAltDelTimeoutMs ??
-    SHUTDOWN_DEFAULTS.ctrlAltDelTimeoutMs;
-  const sigtermMs = opts.sigtermTimeoutMs ?? SHUTDOWN_DEFAULTS.sigtermTimeoutMs;
-  const sigkillMs = opts.sigkillTimeoutMs ?? SHUTDOWN_DEFAULTS.sigkillTimeoutMs;
+  const {
+    ctrlAltDelTimeoutMs: ctrlAltDelMs = 10_000,
+    sigtermTimeoutMs: sigtermMs = 5_000,
+    sigkillTimeoutMs: sigkillMs = 2_000,
+  } = opts;
 
   // Stage 1: ask the guest nicely (x86_64 only).
   if (arch === "x86_64" && ctrlAltDelMs > 0) {
@@ -61,17 +51,14 @@ export async function escalatingShutdown(
     }
   }
 
-  // Stage 2: SIGTERM.
-  target.kill("SIGTERM");
-  {
-    const result = await withDeadline(target.exited, sigtermMs);
-    if (result !== null) return result.done;
-  }
-
-  // Stage 3: SIGKILL.
-  target.kill("SIGKILL");
-  {
-    const result = await withDeadline(target.exited, sigkillMs);
+  for (
+    const [signal, timeoutMs] of [
+      ["SIGTERM", sigtermMs],
+      ["SIGKILL", sigkillMs],
+    ] as const
+  ) {
+    target.kill(signal);
+    const result = await withDeadline(target.exited, timeoutMs);
     if (result !== null) return result.done;
   }
 

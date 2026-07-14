@@ -9,6 +9,11 @@
  * @module
  */
 
-export * from "./client.ts";
-export * from "./transport.ts";
-export * from "./types.ts";
+export {
+  FirecrackerClient,
+  type FirecrackerClientOptions,
+  type RequestOptions,
+  type WaitReadyOptions,
+} from "./client.ts";
+export { type ApiTransport, UnixHttpTransport } from "./transport.ts";
+export type * from "./types.ts";

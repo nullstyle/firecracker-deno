@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0 (2026-07-14)
+
+Public API boundaries are now explicit and regression-tested. The package root
+contains the supervised `Machine` lifecycle, configuration/options, registry and
+recovery contracts, compatibility metadata, errors, and core lifecycle/failure
+types. Lower-level layers use their canonical entrypoints:
+
+- Create/restore and direct/jailed spawning now share one internal option model
+  and one resource manifest. Live disposal, failed-create cleanup, adoption, and
+  reconciliation derive the same ordered cleanup plan: listeners first, owned
+  roots and external legacy paths next, cgroups last, and registry removal only
+  after complete success. Direct spawning refuses pre-existing API/vsock paths
+  instead of claiming caller-owned files.
+- Readiness preserves the first caller/process abort reason, failed jailed
+  handoffs reuse bounded orphan termination, and an unkillable VMM retains its
+  journal and files for a later recovery pass.
+- Vsock connections and listeners are decorated native Deno Unix handles rather
+  than forwarding wrappers; metadata remains readonly/enumerable and async
+  listener disposal closes and unlinks the socket.
+- `@nullstyle/firecracker/client`: `FirecrackerClient`, transport contracts, and
+  all Firecracker wire types. The former `/types` entrypoint is removed.
+- `@nullstyle/firecracker/vsock`: standalone connect/listen functions and handle
+  types. The internal `wrapVsockConn` adapter is no longer exposed.
+- `@nullstyle/firecracker/jailer`: argv, validation, path, and staging helpers.
+  `JailerOptions` and `StageEntry` remain available at the package root because
+  they are inputs to `Machine`.
+- `API_OPERATIONS` is removed. The fake-backed client suite now compares the
+  operations it actually exercises directly with the pinned Firecracker spec.
+- `applyVmConfig` and the process, shutdown, pidfile, and cleanup helpers are
+  now internal. Use `Machine`, or the canonical lower-level entrypoint, instead.
+- The client now reuses the shared abort-aware retry delay implementation.
+- The minimum supported runtime is now Deno 2.9; CI enforces both 2.9.x and
+  current Deno on macOS and Linux.
+- The handwritten production surface is more than 250 lines smaller than 0.3.0
+  (generated types and tests excluded).
+
 ## 0.3.0 (2026-07-12)
 
 MicroVM **adoption**: a restarted supervisor can re-attach to still-running VMs

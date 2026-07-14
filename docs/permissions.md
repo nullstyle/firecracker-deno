@@ -17,9 +17,8 @@ works in practice.
 
 Notes:
 
-- `fetch` over a Unix socket uses `Deno.createHttpClient` (Deno ≥ 2.5; 2.4 gated
-  it behind --allow-all) and needs `--allow-net` besides the socket read/write
-  grants.
+- `fetch` over a Unix socket uses `Deno.createHttpClient` (Deno ≥ 2.9) and needs
+  `--allow-net` besides the socket read/write grants.
 - `Deno.kill` (shutdown escalation, reconcile liveness probing) is covered by
   `--allow-run`.
 - Reconcile's pid-identity check reads `/proc/<pid>/cmdline` on Linux; add

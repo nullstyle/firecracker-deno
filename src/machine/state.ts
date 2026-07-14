@@ -32,11 +32,6 @@ export class LifecycleState {
     return this.#state;
   }
 
-  /** The exit recorded when the state moved to `exited`, if any. */
-  get lastExit(): VmmExit | null {
-    return this.#lastExit;
-  }
-
   /** Whether the machine has reached a terminal state. */
   get terminal(): boolean {
     return TERMINAL.includes(this.#state);

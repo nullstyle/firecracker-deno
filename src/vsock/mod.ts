@@ -9,6 +9,6 @@
  * @module
  */
 
-export * from "./conn.ts";
-export * from "./dial.ts";
-export * from "./listen.ts";
+export type { VsockConn } from "./conn.ts";
+export { connectVsock, type VsockDialOptions } from "./dial.ts";
+export { listenVsock, type VsockListener } from "./listen.ts";

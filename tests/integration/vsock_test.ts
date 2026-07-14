@@ -8,12 +8,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { envPath } from "./env.ts";
-import {
-  listenVsock,
-  Machine,
-  type VmConfig,
-  VsockDialError,
-} from "../../mod.ts";
+import { Machine, type VmConfig, VsockDialError } from "../../mod.ts";
+import { listenVsock } from "../../src/vsock/mod.ts";
 
 const bin = envPath("FC_TEST_BIN");
 const kernel = envPath("FC_TEST_KERNEL");

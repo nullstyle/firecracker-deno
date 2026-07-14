@@ -1,6 +1,6 @@
 # @nullstyle/firecracker
 
-> **Status: 0.3.0.** Everything below is implemented and tested (130+ tests
+> **Status: 0.4.0.** Everything below is implemented and tested (130+ tests
 > across four tiers, including real-KVM CI).
 
 **@nullstyle/firecracker** is a Deno-native toolkit for controlling
@@ -77,6 +77,22 @@ Plus `@nullstyle/firecracker/testing`: a publishable `FakeFirecracker` that
 speaks the API and vsock protocols over real Unix sockets — so you can test your
 sandbox platform on any OS, without KVM.
 
+### Migrating from 0.3
+
+Version 0.4 makes each layer's public boundary explicit. The package root is the
+`Machine` lifecycle API; lower-level client, vsock, and jailer primitives live
+at their canonical subpaths.
+
+| 0.3 import                                                                                                   | 0.4 import or replacement                                                       |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Client, transport, or Firecracker wire types from `@nullstyle/firecracker` or `@nullstyle/firecracker/types` | `@nullstyle/firecracker/client`                                                 |
+| `connectVsock`, `listenVsock`, and vsock handle/options types from the package root                          | `@nullstyle/firecracker/vsock`                                                  |
+| Jailer argv, validation, path, or staging helpers from the package root                                      | `@nullstyle/firecracker/jailer`                                                 |
+| `JailerOptions` and `StageEntry` from the package root                                                       | Unchanged (also available from `/jailer`)                                       |
+| `API_OPERATIONS`                                                                                             | Removed; client coverage is checked directly against the pinned spec            |
+| `applyVmConfig`                                                                                              | Use `Machine.create`/`Machine.launch`, or call typed `/client` methods directly |
+| Process, shutdown, pidfile, cleanup helpers, and `wrapVsockConn`                                             | Internal implementation details; no public replacement                          |
+
 **Non-goals** — this library does not manage kernel/rootfs images, configure
 host networking (taps, bridges, iptables), or orchestrate fleets. It hands you
 correct, well-typed primitives to build those on.
@@ -109,8 +125,7 @@ The `Machine` layer maintains these invariants:
 - **Runtime**: Linux with KVM (`/dev/kvm`) to actually run VMs. The client,
   vsock protocol code, and `FakeFirecracker` work on any Deno platform — develop
   and unit-test on macOS, run on Linux.
-- **Deno** ≥ 2.5 (native HTTP-over-Unix-socket `fetch` usable with scoped
-  permissions; 2.4 gated it behind `--allow-all`).
+- **Deno** ≥ 2.9.
 - **Firecracker** within the supported window (see `FIRECRACKER_COMPAT`): pinned
   against v1.16.x, minimum v1.15.0. Jailed mode requires root.
 

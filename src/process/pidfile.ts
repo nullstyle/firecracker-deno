@@ -19,15 +19,8 @@ import {
   pidMatchesVmmSync,
 } from "../internal/liveness.ts";
 import type { VmmExit } from "../types.ts";
-import type { VmmHandle, VmmProcess } from "./supervisor.ts";
+import type { VmmProcess } from "./supervisor.ts";
 
-/**
- * Wait for the pidfile to appear and contain a pid.
- *
- * `jailer` is the spawned jailer process: if it exits non-zero before the
- * pidfile shows up, that failure (with its stderr) is the real error. A
- * zero exit is expected — that's the daemonize/new-pid-ns contract.
- */
 export async function waitForPidfile(
   path: string,
   opts: {
@@ -67,10 +60,6 @@ export async function waitForPidfile(
   );
 }
 
-/**
- * Read a pid from `path`, or null when the file is missing, empty, or not
- * yet fully written (the write-then-exec race).
- */
 export async function tryReadPidfile(path: string): Promise<number | null> {
   try {
     const text = await Deno.readTextFile(path);
@@ -81,29 +70,14 @@ export async function tryReadPidfile(path: string): Promise<number | null> {
   }
 }
 
-/**
- * Exit authority for a VMM that is not our child: polls signal-0 liveness.
- * `kill` goes straight to the pid; `stderrTail` reports what the *jailer*
- * printed before detaching (Firecracker's own stderr is unobservable in
- * these modes — use the `logger` device).
- */
-export class ReparentedVmm implements VmmHandle {
-  /** The reparented VMM's pid, read from the pidfile. */
+export class ReparentedVmm {
   readonly pid: number;
-  /** Resolves when liveness polling observes the pid gone. Never rejects. */
   readonly exited: Promise<VmmExit>;
 
   #exit: VmmExit | null = null;
   #jailerStderr: () => string;
   #identityTokens: string[];
 
-  /**
-   * Watch `pid`; `jailerStderr` supplies diagnostics captured pre-detach.
-   * `identityToken` (e.g. the VMM's `--id` cmdline token) guards against
-   * pid reuse: once the pid no longer looks like our VMM, it is treated as
-   * exited, and `kill` refuses to signal the recycled pid. On systems
-   * without `/proc` the guard degrades to plain liveness.
-   */
   constructor(
     pid: number,
     opts: {
@@ -135,25 +109,18 @@ export class ReparentedVmm implements VmmHandle {
     })();
   }
 
-  /** The exit, if liveness polling has already observed it. */
   get exit(): VmmExit | null {
     return this.#exit;
   }
 
-  /** What the jailer printed before detaching (the VMM's own stderr is unobservable). */
   stderrTail(): string {
     return this.#jailerStderr();
   }
 
-  /** Always empty: a reparented VMM's stdout is unobservable. */
   stdoutTail(): string {
     return "";
   }
 
-  /**
-   * Signal the pid directly; already-gone processes are not an error, and
-   * a pid that no longer looks like our VMM (pid reuse) is left alone.
-   */
   kill(signal: Deno.Signal): void {
     if (this.#exit !== null) return;
     if (

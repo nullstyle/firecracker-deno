@@ -11,7 +11,7 @@
  * It is the low-level foundation for building secure local sandboxes,
  * microVM runners, and higher-level platforms.
  *
- * Firecracker runs on Linux hosts with KVM; this library requires Deno 2.5+
+ * Firecracker runs on Linux hosts with KVM; this library requires Deno 2.9+
  * and Firecracker within the window described by {@linkcode FIRECRACKER_COMPAT}.
  *
  * @example Boot a microVM, talk to it over vsock, clean up on scope exit
@@ -45,34 +45,53 @@
  * @module
  */
 
-export * from "./src/errors.ts";
-export * from "./src/types.ts";
 export { FIRECRACKER_COMPAT, type FirecrackerCompat } from "./src/compat.ts";
-export * from "./src/api/types.ts";
-export * from "./src/api/client.ts";
-export * from "./src/api/transport.ts";
-export * from "./src/machine/machine.ts";
-export * from "./src/machine/recover.ts";
-export * from "./src/vsock/mod.ts";
-export * from "./src/registry/registry.ts";
-export * from "./src/registry/dir_registry.ts";
-export * from "./src/registry/reconcile.ts";
-export { applyVmConfig, type VmConfig } from "./src/machine/config.ts";
 export {
-  escalatingShutdown,
-  SHUTDOWN_DEFAULTS,
-  type ShutdownTarget,
-} from "./src/process/shutdown.ts";
+  AdoptError,
+  ApiError,
+  CleanupError,
+  type CleanupFailure,
+  FirecrackerError,
+  InvalidStateError,
+  JailerConfigError,
+  ProcessExitedError,
+  ReadinessTimeoutError,
+  ShutdownTimeoutError,
+  TransportError,
+  VsockDialError,
+} from "./src/errors.ts";
+export type { JailerOptions, StageEntry } from "./src/jailer/options.ts";
+export type { VmConfig } from "./src/machine/config.ts";
 export {
-  type VmmHandle,
-  VmmProcess,
-  type VmmSpawnOptions,
-} from "./src/process/supervisor.ts";
-export { ReparentedVmm, waitForPidfile } from "./src/process/pidfile.ts";
-export * from "./src/jailer/mod.ts";
+  type AdoptOptions,
+  type CommonMachineOptions,
+  type CommonRestoreOptions,
+  type DirectMachineOptions,
+  type DirectRestoreOptions,
+  type JailedMachineOptions,
+  type JailedRestoreOptions,
+  Machine,
+  type MachineOptions,
+  type RestoreOptions,
+} from "./src/machine/machine.ts";
 export {
-  cleanupError,
-  type CleanupStep,
-  removePathStep,
-  runCleanupSteps,
-} from "./src/cleanup.ts";
+  recover,
+  type RecoverOptions,
+  type RecoverResult,
+} from "./src/machine/recover.ts";
+export { DirRegistry } from "./src/registry/dir_registry.ts";
+export {
+  reconcile,
+  type ReconcileOptions,
+  type ReconcileResult,
+} from "./src/registry/reconcile.ts";
+export type { JailRecord, VmRegistry } from "./src/registry/registry.ts";
+export type {
+  AdoptFailureReason,
+  ExitObservation,
+  ShutdownOptions,
+  ShutdownStage,
+  VmmExit,
+  VmState,
+  VsockDialFailureReason,
+} from "./src/types.ts";

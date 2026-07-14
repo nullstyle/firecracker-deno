@@ -6,7 +6,15 @@
  * @module
  */
 
-export * from "./argv.ts";
-export * from "./options.ts";
-export * from "./paths.ts";
-export * from "./stage.ts";
+export { buildJailerArgv } from "./argv.ts";
+export { stagedJailPath, validateJailerOptions } from "./options.ts";
+export type { JailerOptions, StageEntry } from "./options.ts";
+export {
+  assertNoTraversal,
+  computeJailPaths,
+  DEFAULT_CHROOT_BASE,
+  hostPathOf,
+} from "./paths.ts";
+export type { JailPaths } from "./paths.ts";
+export { planStaging, stageChroot } from "./stage.ts";
+export type { StagingAction } from "./stage.ts";

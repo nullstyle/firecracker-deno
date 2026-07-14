@@ -1,13 +1,12 @@
 {
   "name": "@nullstyle/firecracker",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "Apache-2.0",
   "exports": {
     ".": "./mod.ts",
     "./client": "./src/api/mod.ts",
     "./vsock": "./src/vsock/mod.ts",
     "./jailer": "./src/jailer/mod.ts",
-    "./types": "./src/api/types.ts",
     "./testing": "./testing/mod.ts"
   },
   "imports": {
@@ -27,7 +26,7 @@
     "spec:drift": "deno run --allow-read --allow-write --allow-net --allow-env tools/check-spec-drift.ts"
   },
   "fmt": {
-    "exclude": ["spec/"]
+    "exclude": ["spec/", ".claude/worktrees/"]
   },
   "lint": {
     "exclude": ["src/generated/"]

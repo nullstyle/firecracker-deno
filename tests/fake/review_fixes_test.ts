@@ -13,11 +13,11 @@ import {
   Machine,
   ProcessExitedError,
   ReadinessTimeoutError,
-  VmmProcess,
-  waitForPidfile,
 } from "../../mod.ts";
-import { FirecrackerClient } from "../../mod.ts";
-import type { JailRecord } from "../../mod.ts";
+import type { JailRecord, VmRegistry } from "../../mod.ts";
+import { FirecrackerClient } from "../../src/api/mod.ts";
+import { waitForPidfile } from "../../src/process/pidfile.ts";
+import { VmmProcess } from "../../src/process/supervisor.ts";
 
 async function withDir(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir({ dir: "/tmp", prefix: "fcr-" });
@@ -59,6 +59,98 @@ Deno.test("failed spawn (bad binary) unwinds the journal record and state", asyn
       Deno.errors.NotFound,
     );
     assertEquals(await registry.list(), [], "record must be unwound");
+  });
+});
+
+Deno.test("pre-existing paths in a caller-owned state dir are refused", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "registry"));
+    const stateDir = join(dir, "state");
+    const socketPath = join(stateDir, "reserved.sock");
+    const bin = await makeFakeVmmBin(dir, "ready");
+    await Deno.mkdir(stateDir);
+    await Deno.writeTextFile(socketPath, "caller-owned");
+    await assertRejects(
+      () =>
+        Machine.create({
+          firecrackerBin: bin,
+          config: { boot_source: { kernel_image_path: "/vmlinux" } },
+          stateDir,
+          socketPath,
+          registry,
+        }),
+      JailerConfigError,
+      "refusing to claim",
+    );
+    assertEquals(await Deno.readTextFile(socketPath), "caller-owned");
+    assertEquals(await registry.list(), []);
+  });
+});
+
+Deno.test("pre-existing vsock paths in a caller-owned state dir are refused", async () => {
+  await withDir(async (dir) => {
+    const registry = new DirRegistry(join(dir, "registry"));
+    const stateDir = join(dir, "state");
+    const vsockPath = join(stateDir, "reserved-vsock.sock");
+    const bin = await makeFakeVmmBin(dir, "ready");
+    await Deno.mkdir(stateDir);
+    await Deno.writeTextFile(vsockPath, "caller-owned");
+    await assertRejects(
+      () =>
+        Machine.create({
+          firecrackerBin: bin,
+          config: {
+            boot_source: { kernel_image_path: "/vmlinux" },
+            vsock: { guest_cid: 3, uds_path: vsockPath },
+          },
+          stateDir,
+          registry,
+        }),
+      JailerConfigError,
+      "vsock UDS path",
+    );
+    assertEquals(await Deno.readTextFile(vsockPath), "caller-owned");
+    assertEquals(await registry.list(), []);
+  });
+});
+
+Deno.test("failed spawn retains its journal when resource cleanup fails", async () => {
+  await withDir(async (dir) => {
+    const records = new DirRegistry(join(dir, "registry"));
+    let ownedStateDir: string | undefined;
+    const registry: VmRegistry = {
+      async put(record) {
+        ownedStateDir = record.stateDir;
+        await records.put(record);
+        await Deno.writeTextFile(join(record.stateDir, "keep"), "blocked");
+        await Deno.chmod(record.stateDir, 0o500);
+      },
+      update: (vmId, patch) => records.update(vmId, patch),
+      remove: (vmId) => records.remove(vmId),
+      list: () => records.list(),
+    };
+    try {
+      await assertRejects(
+        () =>
+          Machine.create({
+            firecrackerBin: join(dir, "no-such-firecracker"),
+            config: { boot_source: { kernel_image_path: "/vmlinux" } },
+            id: "cleanup-failed",
+            registry,
+          }),
+        Deno.errors.NotFound,
+      );
+      assertEquals(
+        (await records.list()).map((record) => record.vmId),
+        ["cleanup-failed"],
+        "the record is cleanup authority and must be removed last",
+      );
+    } finally {
+      if (ownedStateDir !== undefined) {
+        await Deno.chmod(ownedStateDir, 0o700).catch(() => {});
+        await Deno.remove(ownedStateDir, { recursive: true }).catch(() => {});
+      }
+    }
   });
 });
 

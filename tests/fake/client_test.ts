@@ -1,13 +1,8 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { parse } from "@std/yaml";
 import { join } from "@std/path";
-import {
-  API_OPERATIONS,
-  ApiError,
-  FirecrackerClient,
-  ReadinessTimeoutError,
-  UnixHttpTransport,
-} from "../../mod.ts";
+import { FirecrackerClient, UnixHttpTransport } from "../../src/api/mod.ts";
+import { ApiError, ReadinessTimeoutError } from "../../src/errors.ts";
 import { FakeFirecracker } from "../../testing/mod.ts";
 
 const HTTP_METHODS = ["get", "put", "patch", "post", "delete"];
@@ -40,23 +35,6 @@ function templateOf(path: string): string {
     .replace(/^\/network-interfaces\/[^/]+$/, "/network-interfaces/{iface_id}")
     .replace(/^\/pmem\/[^/]+$/, "/pmem/{id}");
 }
-
-Deno.test("API_OPERATIONS covers the pinned spec exactly, with a real method each", () => {
-  const spec = specOperations();
-  assertEquals(
-    Object.keys(API_OPERATIONS).sort(),
-    spec,
-    "client operation map and pinned spec disagree",
-  );
-  using client = new FirecrackerClient({ socketPath: "/nonexistent.sock" });
-  for (const [op, method] of Object.entries(API_OPERATIONS)) {
-    assert(
-      typeof (client as unknown as Record<string, unknown>)[method] ===
-        "function",
-      `API_OPERATIONS["${op}"] names missing method "${method}"`,
-    );
-  }
-});
 
 Deno.test("every spec operation round-trips over a real Unix socket", async () => {
   await using fake = await FakeFirecracker.start();
@@ -149,15 +127,17 @@ Deno.test("every spec operation round-trips over a real Unix socket", async () =
   });
   assertEquals(restored.state, "Running");
 
-  // --- coverage: every operation in the map was actually exercised ---
+  // --- coverage: every pinned-spec operation was actually exercised ---
   const exercised = new Set(
     [...fake.requests, ...restored.requests].map(
       (r) => `${r.method} ${templateOf(r.path)}`,
     ),
   );
-  for (const op of Object.keys(API_OPERATIONS)) {
-    assert(exercised.has(op), `spec operation never exercised: ${op}`);
-  }
+  assertEquals(
+    [...exercised].sort(),
+    specOperations(),
+    "exercised client operations and pinned spec disagree",
+  );
 });
 
 Deno.test("boot-phase gating matches Firecracker semantics", async () => {
@@ -243,6 +223,30 @@ Deno.test("waitReady times out with ReadinessTimeoutError when nothing listens",
       ReadinessTimeoutError,
     );
     assertEquals(err.waitedMs, 200);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("waitReady aborts during its retry delay", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    using client = new FirecrackerClient({
+      socketPath: join(dir, "absent.sock"),
+    });
+    const aborter = new AbortController();
+    const started = performance.now();
+    const waiting = client.waitReady({
+      timeoutMs: 5_000,
+      intervalMs: 2_000,
+      signal: aborter.signal,
+    });
+    setTimeout(() => aborter.abort(new Error("cancelled")), 20);
+    await assertRejects(() => waiting, Error, "cancelled");
+    assert(
+      performance.now() - started < 1_000,
+      "abort should interrupt the retry delay",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

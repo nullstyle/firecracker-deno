@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { FirecrackerClient } from "../../mod.ts";
+import { FirecrackerClient } from "../../src/api/mod.ts";
 import { readLineBytewise, writeAll } from "../../src/internal/line_reader.ts";
 import { FakeFirecracker } from "../../testing/mod.ts";
 

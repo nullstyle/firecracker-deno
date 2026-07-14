@@ -38,52 +38,31 @@ export interface VsockListener
 export function listenVsock(udsPath: string, port: number): VsockListener {
   const path = `${udsPath}_${port}`;
   const inner = Deno.listen({ transport: "unix", path });
-  return new VsockListenerImpl(inner, path, port);
-}
-
-class VsockListenerImpl implements VsockListener {
-  readonly path: string;
-  readonly port: number;
-  #inner: Deno.Listener;
-  #closed = false;
-
-  constructor(inner: Deno.Listener, path: string, port: number) {
-    this.#inner = inner;
-    this.path = path;
-    this.port = port;
-  }
-
-  accept(): Promise<Deno.Conn> {
-    return this.#inner.accept();
-  }
-
-  close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
+  const nativeClose = inner.close.bind(inner);
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
     try {
-      this.#inner.close();
+      nativeClose();
     } catch {
       // already closed
     }
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<Deno.Conn> {
-    while (true) {
-      try {
-        yield await this.#inner.accept();
-      } catch {
-        // listener closed
-        return;
-      }
-    }
-  }
-
-  async [Symbol.asyncDispose](): Promise<void> {
-    this.close();
+  };
+  const dispose = async () => {
+    close();
     try {
-      await Deno.remove(this.path);
+      await Deno.remove(path);
     } catch {
       // already gone
     }
-  }
+  };
+
+  Object.defineProperties(inner, {
+    path: { value: path, enumerable: true },
+    port: { value: port, enumerable: true },
+    close: { value: close },
+    [Symbol.asyncDispose]: { value: dispose },
+  });
+  return inner as unknown as VsockListener;
 }

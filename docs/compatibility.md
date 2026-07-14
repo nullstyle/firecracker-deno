@@ -3,9 +3,9 @@
 This library mirrors Firecracker's own support policy: the **current and
 previous minor** versions. The window ships in code as `FIRECRACKER_COMPAT`:
 
-| Library | Pinned (types & client surface) | Minimum supported |
-| ------- | ------------------------------- | ----------------- |
-| 0.1.x   | Firecracker v1.16.1             | v1.15.0           |
+| Library     | Pinned (types & client surface) | Minimum supported |
+| ----------- | ------------------------------- | ----------------- |
+| 0.1.x–0.4.x | Firecracker v1.16.1             | v1.15.0           |
 
 - **Pinned** — the vendored swagger spec the generated types and the
   `FirecrackerClient` surface come from (`spec/firecracker-<tag>.yaml`).
@@ -19,6 +19,9 @@ Surface that exists only in the pinned minor (not the previous one) is tagged
 `@since v1.16` in [`src/api/types.ts`](../src/api/types.ts) and enumerated in
 [`spec/surface-diff.json`](../spec/surface-diff.json) — using it against a v1.15
 VMM yields an API 400.
+
+Import generated wire types from `@nullstyle/firecracker/client`; the former
+`@nullstyle/firecracker/types` entrypoint was removed in 0.4.0.
 
 ## How the pipeline stays honest
 

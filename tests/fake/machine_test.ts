@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "@std/assert";
 import { join } from "@std/path";
 import {
   InvalidStateError,
@@ -74,16 +79,19 @@ Deno.test("readiness races death: a VMM that dies pre-bind fails fast with its s
   await withDir(async (dir) => {
     const bin = await makeFakeVmmBin(dir, "exit-before-bind");
     const stateDir = join(dir, "state");
-    const err = await assertRejects(
-      () =>
-        Machine.create({
-          firecrackerBin: bin,
-          config: CONFIG,
-          stateDir,
-          readinessTimeoutMs: 10_000,
-        }),
-      ProcessExitedError,
+    const caller = new AbortController();
+    const lateAbort = setTimeout(
+      () => caller.abort(new Error("caller was later")),
+      2_000,
     );
+    const err = await assertRejects(() =>
+      Machine.create({
+        firecrackerBin: bin,
+        config: CONFIG,
+        stateDir,
+        readinessTimeoutMs: 10_000,
+        signal: caller.signal,
+      }), ProcessExitedError).finally(() => clearTimeout(lateAbort));
     assertEquals(err.exit.code, 7);
     assert(
       err.exit.stderrTail.includes("could not open /dev/kvm"),
@@ -94,6 +102,37 @@ Deno.test("readiness races death: a VMM that dies pre-bind fails fast with its s
       await Deno.stat(join(stateDir, "fc.sock")).catch(() => null),
       null,
     );
+  });
+});
+
+Deno.test("readiness preserves the caller's first abort reason", async () => {
+  await withDir(async (dir) => {
+    const bin = await makeFakeVmmBin(dir, "never-bind");
+    const caller = new AbortController();
+    const reason = new Error("caller stopped create");
+    const waiting = Machine.create({
+      firecrackerBin: bin,
+      config: CONFIG,
+      stateDir: join(dir, "state"),
+      readinessTimeoutMs: 10_000,
+      signal: caller.signal,
+    });
+    setTimeout(() => caller.abort(reason), 50);
+    assertStrictEquals(await assertRejects(() => waiting), reason);
+  });
+});
+
+Deno.test("an already-aborted create does not spawn", async () => {
+  await withDir(async (dir) => {
+    const reason = new Error("cancelled before create");
+    const err = await assertRejects(() =>
+      Machine.create({
+        firecrackerBin: join(dir, "would-not-exist"),
+        config: CONFIG,
+        signal: AbortSignal.abort(reason),
+      })
+    );
+    assertStrictEquals(err, reason);
   });
 });
 

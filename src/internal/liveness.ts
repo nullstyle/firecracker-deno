@@ -5,39 +5,16 @@
  * @module
  */
 
-// Deno < 2.5 rejects the numeric signal-0 probe with a TypeError
-// ("Invalid signal") regardless of pid state; detected once, then the
-// SIGCONT fallback is used — harmless to a running VMM, ESRCH on a dead
-// pid, EPERM (=> exists) on someone else's.
-let zeroProbeWorks: boolean | null = null;
-
 /**
  * Liveness probe: true if `pid` exists (even if owned by another user).
  * A reaped process is gone; an unreaped zombie still counts as existing.
- * Uses signal 0 where the runtime supports it, SIGCONT otherwise.
  */
 export function pidAlive(pid: number): boolean {
-  if (zeroProbeWorks !== false) {
-    try {
-      Deno.kill(pid, 0 as unknown as Deno.Signal);
-      zeroProbeWorks = true;
-      return true;
-    } catch (err) {
-      if (err instanceof Deno.errors.NotFound) {
-        zeroProbeWorks = true;
-        return false;
-      }
-      if (!(err instanceof TypeError)) {
-        // EPERM and friends: the pid exists.
-        return true;
-      }
-      zeroProbeWorks = false; // unsupported runtime — fall through
-    }
-  }
   try {
-    Deno.kill(pid, "SIGCONT");
+    Deno.kill(pid, 0 as unknown as Deno.Signal);
     return true;
   } catch (err) {
+    // EPERM and friends mean the pid exists; only ESRCH means it is gone.
     return !(err instanceof Deno.errors.NotFound);
   }
 }

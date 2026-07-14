@@ -8,63 +8,17 @@
 import { RingBuffer } from "../internal/ring_buffer.ts";
 import type { VmmExit } from "../types.ts";
 
-/**
- * What the machine layer needs from a VMM, regardless of how it is
- * observed: a direct child ({@linkcode VmmProcess}, child-status
- * authority) or a reparented process (`ReparentedVmm`, pidfile-poll
- * authority).
- */
-export interface VmmHandle {
-  /** Authoritative VMM pid. */
-  readonly pid: number;
-  /** Resolves exactly once with the observed exit. Never rejects. */
-  readonly exited: Promise<VmmExit>;
-  /** The exit, if already observed. */
-  readonly exit: VmmExit | null;
-  /** Deliver a signal; a process that already exited is not an error. */
-  kill(signal: Deno.Signal): void;
-  /** Captured stderr tail (empty when unobservable). */
-  stderrTail(): string;
-  /** Captured stdout tail (guest console; empty when unobservable). */
-  stdoutTail(): string;
-}
-
-/** Options for {@linkcode VmmProcess.spawn}. */
-export interface VmmSpawnOptions {
-  /** Executable to run (firecracker, jailer, or a test double). */
+interface VmmSpawnOptions {
   command: string;
-  /** Full argv (not including the command itself). */
   args: string[];
-  /** Working directory for the child. */
   cwd?: string;
-  /** Extra environment variables for the child. */
   env?: Record<string, string>;
-  /** Ring-buffer capacity per stream, in bytes. @default 8192 */
   tailCapacity?: number;
-  /**
-   * What to do with the child's stdout/stderr: `"capture"` (default)
-   * pipes them into the in-memory tails; `"null"` discards them at spawn
-   * time. Discarding is what lets the process survive this supervisor's
-   * death — a pipe whose reader is gone wedges Firecracker on its next
-   * write (see `Machine.adopt`).
-   */
   stdio?: "capture" | "null";
 }
 
-/**
- * A spawned VMM process whose exit is observed exactly once.
- *
- * Both stdout (the guest serial console, when `console=ttyS0`) and stderr
- * (Firecracker's own errors) are continuously drained into bounded ring
- * buffers — an undrained pipe would eventually block the VMM.
- */
-export class VmmProcess implements VmmHandle {
-  /** PID of the direct child. */
+export class VmmProcess {
   readonly pid: number;
-  /**
-   * Resolves exactly once with how the process exited. Never rejects.
-   * The `stderrTail` snapshot is taken after both output streams close.
-   */
   readonly exited: Promise<VmmExit>;
 
   #child: Deno.ChildProcess;
@@ -98,7 +52,6 @@ export class VmmProcess implements VmmHandle {
     })();
   }
 
-  /** Spawn a process with drained-into-tails (or discarded) output. */
   static spawn(options: VmmSpawnOptions): VmmProcess {
     const captured = options.stdio !== "null";
     const child = new Deno.Command(options.command, {
@@ -112,25 +65,18 @@ export class VmmProcess implements VmmHandle {
     return new VmmProcess(child, options.tailCapacity ?? 8192, captured);
   }
 
-  /** The exit, if the process has already been observed to exit. */
   get exit(): VmmExit | null {
     return this.#exit;
   }
 
-  /** Current stderr tail (Firecracker's own errors). */
   stderrTail(): string {
     return this.#exit?.stderrTail ?? this.#stderrRing.tail();
   }
 
-  /** Current stdout tail (guest serial console with `console=ttyS0`). */
   stdoutTail(): string {
     return this.#stdoutRing.tail();
   }
 
-  /**
-   * Deliver a signal. A process that already exited is not an error —
-   * signaling races exit by nature, so that case is swallowed.
-   */
   kill(signal: Deno.Signal): void {
     if (this.#exit !== null) return;
     try {

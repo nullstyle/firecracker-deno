@@ -5,7 +5,8 @@ scheduler, or platform **without KVM, Linux, or root** — on laptops and in any
 CI. Import the same test double this library uses:
 
 ```ts
-import { FirecrackerClient, Machine } from "@nullstyle/firecracker";
+import { Machine } from "@nullstyle/firecracker";
+import { FirecrackerClient } from "@nullstyle/firecracker/client";
 import { FakeFirecracker } from "@nullstyle/firecracker/testing";
 ```
 

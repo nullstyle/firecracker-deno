@@ -1,10 +1,9 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ShutdownTimeoutError } from "../../src/errors.ts";
-import {
-  escalatingShutdown,
-  type ShutdownTarget,
-} from "../../src/process/shutdown.ts";
+import { escalatingShutdown } from "../../src/process/shutdown.ts";
 import type { VmmExit } from "../../src/types.ts";
+
+type ShutdownTarget = Parameters<typeof escalatingShutdown>[0];
 
 const EXIT: VmmExit = {
   code: 0,

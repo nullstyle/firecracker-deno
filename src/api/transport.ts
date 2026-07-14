@@ -2,7 +2,7 @@
  * HTTP-over-Unix-domain-socket transport for the Firecracker API.
  *
  * The default {@linkcode UnixHttpTransport} uses Deno's native `fetch` with
- * a Unix-socket proxy client (Deno ≥ 2.5). The {@linkcode ApiTransport}
+ * a Unix-socket proxy client (Deno ≥ 2.9). The {@linkcode ApiTransport}
  * interface is the injection seam for tests and exotic setups.
  *
  * @module

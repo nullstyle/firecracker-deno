@@ -19,19 +19,19 @@
  * @module
  */
 
-const args = new Map<string, string | boolean>();
-for (let i = 0; i < Deno.args.length; i++) {
-  const arg = Deno.args[i];
-  if (!arg.startsWith("--")) continue;
-  const next = Deno.args[i + 1];
-  if (next !== undefined && !next.startsWith("--")) {
-    args.set(arg, next);
-    i++;
-  } else {
-    args.set(arg, true);
-  }
-}
-const name = (args.get("--name") as string | undefined) ?? "fc-smoke";
+import { Command } from "@cliffy/command";
+
+const { options } = await new Command()
+  .name("smoke:lima")
+  .description("Run the real-KVM integration suite in a Lima VM.")
+  .option("--name <name:string>", "Lima instance name.", {
+    default: "fc-smoke",
+  })
+  .option("--recreate", "Rebuild the Lima instance before running.")
+  .option("--delete", "Delete the Lima instance and exit.")
+  .parse(Deno.args);
+
+const { name, recreate, delete: deleteInstance } = options;
 const repo = Deno.cwd();
 
 function fail(message: string): never {
@@ -85,16 +85,16 @@ const listed = new TextDecoder().decode(
 );
 const exists = listed.split("\n").includes(name);
 
-if (args.has("--delete")) {
+if (deleteInstance) {
   if (exists) await host(["limactl", "delete", "-f", name]);
   console.log(`✓ instance ${name} deleted`);
   Deno.exit(0);
 }
-if (args.has("--recreate") && exists) {
+if (recreate && exists) {
   await host(["limactl", "delete", "-f", name]);
 }
 
-if (!exists || args.has("--recreate")) {
+if (!exists || recreate) {
   console.log(`creating Lima instance ${name} (first run downloads an image)…`);
   await host([
     "limactl",

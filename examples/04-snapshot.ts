@@ -8,12 +8,24 @@
  */
 
 import { join } from "@std/path";
+import { parseFlags } from "@cliffy/flags";
 import { Machine } from "../mod.ts";
 
-function flag(name: string, fallback: string): string {
-  const idx = Deno.args.indexOf(`--${name}`);
-  return idx === -1 ? fallback : Deno.args[idx + 1];
-}
+const { flags } = parseFlags(Deno.args, {
+  flags: [
+    {
+      name: "firecracker",
+      type: "string",
+      default: "tests/assets/firecracker",
+    },
+    { name: "kernel", type: "string", default: "tests/assets/vmlinux" },
+    {
+      name: "rootfs",
+      type: "string",
+      default: "tests/assets/rootfs.ext4",
+    },
+  ],
+});
 
 const work = await Deno.makeTempDir({ dir: "/tmp", prefix: "fc-snap-" });
 const snapshotPath = join(work, "snap.state");
@@ -22,16 +34,16 @@ const memPath = join(work, "snap.mem");
 // 1. Boot, let the guest do some work, snapshot it (pause → create → resume).
 {
   await using vm = await Machine.launch({
-    firecrackerBin: flag("firecracker", "tests/assets/firecracker"),
+    firecrackerBin: flags.firecracker,
     config: {
       machine_config: { vcpu_count: 1, mem_size_mib: 256 },
       boot_source: {
-        kernel_image_path: flag("kernel", "tests/assets/vmlinux"),
+        kernel_image_path: flags.kernel,
         boot_args: "console=ttyS0 reboot=k panic=1 pci=off",
       },
       drives: [{
         drive_id: "rootfs",
-        path_on_host: flag("rootfs", "tests/assets/rootfs.ext4"),
+        path_on_host: flags.rootfs,
         is_root_device: true,
         is_read_only: false,
       }],
@@ -50,7 +62,7 @@ const memPath = join(work, "snap.mem");
 // 2. Restore into a brand-new VMM and resume where it left off.
 {
   await using vm = await Machine.restore({
-    firecrackerBin: flag("firecracker", "tests/assets/firecracker"),
+    firecrackerBin: flags.firecracker,
     snapshot: {
       snapshot_path: snapshotPath,
       mem_backend: { backend_type: "File", backend_path: memPath },

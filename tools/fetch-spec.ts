@@ -6,11 +6,21 @@
  * @module
  */
 
-const tag = Deno.args[0];
-if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag)) {
-  console.error("usage: fetch-spec.ts <tag>   (e.g. v1.16.1)");
-  Deno.exit(1);
-}
+import { Command, ValidationError } from "@cliffy/command";
+
+const { args: [tag] } = await new Command()
+  .name("fetch-spec")
+  .description("Vendor a Firecracker API swagger spec.")
+  .type("release-tag", ({ value }) => {
+    if (!/^v\d+\.\d+\.\d+$/.test(value)) {
+      throw new ValidationError(
+        `Release tag must look like "v1.16.1", but got "${value}".`,
+      );
+    }
+    return value;
+  })
+  .arguments("<tag:release-tag>")
+  .parse(Deno.args);
 
 const url =
   `https://raw.githubusercontent.com/firecracker-microvm/firecracker/${tag}/src/firecracker/swagger/firecracker.yaml`;

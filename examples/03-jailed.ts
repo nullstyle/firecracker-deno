@@ -9,31 +9,44 @@
  *     [--rootfs tests/assets/rootfs.ext4]
  */
 
+import { parseFlags } from "@cliffy/flags";
 import { DirRegistry, Machine, reconcile } from "../mod.ts";
 
-function flag(name: string, fallback: string): string {
-  const idx = Deno.args.indexOf(`--${name}`);
-  return idx === -1 ? fallback : Deno.args[idx + 1];
-}
+const { flags } = parseFlags(Deno.args, {
+  flags: [
+    {
+      name: "firecracker",
+      type: "string",
+      default: "tests/assets/firecracker",
+    },
+    { name: "jailer", type: "string", default: "tests/assets/jailer" },
+    { name: "kernel", type: "string", default: "tests/assets/vmlinux" },
+    {
+      name: "rootfs",
+      type: "string",
+      default: "tests/assets/rootfs.ext4",
+    },
+  ],
+});
 
 const registry = new DirRegistry("/var/lib/fc-example/registry");
 await reconcile(registry, { killLive: true });
 
 await using vm = await Machine.launch({
   jailer: {
-    jailerBin: flag("jailer", "tests/assets/jailer"),
-    firecrackerBin: flag("firecracker", "tests/assets/firecracker"),
+    jailerBin: flags.jailer,
+    firecrackerBin: flags.firecracker,
     id: "example-jail",
     uid: 65534,
     gid: 65534,
     newPidNs: true,
     stage: [
       {
-        hostPath: flag("kernel", "tests/assets/vmlinux"),
+        hostPath: flags.kernel,
         jailPath: "/vmlinux",
       },
       {
-        hostPath: flag("rootfs", "tests/assets/rootfs.ext4"),
+        hostPath: flags.rootfs,
         jailPath: "/rootfs.ext4",
         readWrite: true,
       },

@@ -15,17 +15,24 @@
  * @module
  */
 
+import { Command } from "@cliffy/command";
 import { join } from "@std/path";
 
-const args = new Map<string, string>();
-for (let i = 0; i < Deno.args.length - 1; i++) {
-  if (Deno.args[i].startsWith("--")) args.set(Deno.args[i], Deno.args[i + 1]);
-}
 const versions = JSON.parse(await Deno.readTextFile("spec/versions.json")) as {
   pinned: string;
 };
-const tag = args.get("--tag") ?? versions.pinned;
-const outDir = args.get("--dir") ?? "tests/assets";
+const { options } = await new Command()
+  .name("fetch-firecracker")
+  .description("Fetch Firecracker binaries and guest test assets.")
+  .option("--tag <tag:string>", "Firecracker release tag.", {
+    default: versions.pinned,
+  })
+  .option("--dir <dir:file>", "Output directory.", {
+    default: "tests/assets",
+  })
+  .parse(Deno.args);
+
+const { tag, dir: outDir } = options;
 const arch = Deno.build.arch === "aarch64" ? "aarch64" : "x86_64";
 await Deno.mkdir(outDir, { recursive: true });
 
